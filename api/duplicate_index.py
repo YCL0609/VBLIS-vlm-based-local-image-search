@@ -17,6 +17,8 @@ import threading
 
 import numpy as np
 
+import path_keys
+
 BLOCK_ROWS = 2048  # rows of one E[s:e] @ E.T product: never the full N x N matrix
 
 
@@ -31,12 +33,12 @@ class ExactLevel:
     def __init__(self, collection_name, version, path_by_key, hash_by_key, keys_by_hash):
         self.collection_name = collection_name
         self.version = version
-        self.path_by_key = path_by_key    # normcased path -> path as recorded (for display and disk checks)
-        self.hash_by_key = hash_by_key    # normcased path -> hash (only files that share their hash)
-        self.keys_by_hash = keys_by_hash  # hash -> tuple of normcased paths (two or more)
+        self.path_by_key = path_by_key    # path key -> path as recorded (for display and disk checks)
+        self.hash_by_key = hash_by_key    # path key -> hash (only files that share their hash)
+        self.keys_by_hash = keys_by_hash  # hash -> tuple of path keys (two or more)
 
     def has_existing_partner(self, key, isfile):
-        """True when another file with the hash of `key` (a normcased path) exists; isfile(path) -> bool."""
+        """True when another file with the hash of `key` (a path_keys key) exists; isfile(path) -> bool."""
         file_hash = self.hash_by_key.get(key)
         if file_hash is None:
             return False
@@ -61,8 +63,8 @@ class VisualLevel:
     def __init__(self, collection_name, version, neighbors, path_by_key):
         self.collection_name = collection_name
         self.version = version
-        self.neighbors = neighbors      # normcased path -> frozenset of normcased paths (symmetric)
-        self.path_by_key = path_by_key  # normcased path -> path as recorded (only files that have a partner)
+        self.neighbors = neighbors      # path key -> frozenset of path keys (symmetric)
+        self.path_by_key = path_by_key  # path key -> path as recorded (only files that have a partner)
 
     def partners(self, key):
         return self.neighbors.get(key, frozenset())
@@ -97,7 +99,7 @@ def build_exact_level(collection_name, version, scan):
         file_hash = meta.get("hash") if meta else None
         if not path or not file_hash or _is_video(meta):
             continue
-        key = os.path.normcase(path)
+        key = path_keys.key(path)
         if key in hash_by_key:
             continue
         hash_by_key[key] = file_hash
@@ -124,7 +126,7 @@ def build_visual_level(collection, collection_name, version, threshold, chunk_si
         path = meta.get("path") if meta else None
         if not path or _is_video(meta):
             continue
-        key = os.path.normcase(path)
+        key = path_keys.key(path)
         if key in seen:
             continue
         seen.add(key)
@@ -168,7 +170,7 @@ def build_visual_level(collection, collection_name, version, threshold, chunk_si
                 adjacency.setdefault(col, set()).add(row)
         del matrix, transposed
 
-    keys = [os.path.normcase(paths[position]) for position in kept]
+    keys = [path_keys.key(paths[position]) for position in kept]
     neighbors = {keys[row]: frozenset(keys[col] for col in cols) for row, cols in adjacency.items()}
     path_by_key = {keys[row]: paths[kept[row]] for row in adjacency}
     return VisualLevel(collection_name, version, neighbors, path_by_key)

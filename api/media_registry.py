@@ -8,6 +8,8 @@ import time
 from types import MappingProxyType
 from typing import Mapping, NamedTuple, Optional
 
+import path_keys
+
 SCHEMA_VERSION = 1
 WRITE_CHUNK = 500
 
@@ -113,7 +115,8 @@ class MediaRegistry:
 
     @staticmethod
     def key_for(path: str) -> str:
-        return os.path.normcase(os.path.abspath(path))
+        """The per-platform identity of a file path (see path_keys); every registry key uses it."""
+        return path_keys.key(path)
 
     @property
     def available(self) -> bool:

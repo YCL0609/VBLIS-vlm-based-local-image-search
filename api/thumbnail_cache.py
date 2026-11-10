@@ -10,18 +10,20 @@ import tempfile
 import threading
 from contextlib import contextmanager
 
+import path_keys
+
 THUMBNAIL_SIZE = (480, 480)
 THUMBNAIL_JPEG_QUALITY = 78
 # Temp files are named "<cache file name>.<random>.tmp"
 TEMP_FILE_GLOB = "*.jpg.*.tmp"
 
-_key_locks = {}  # normalized cache path -> [lock, number of threads holding or waiting for it]
+_key_locks = {}  # cache path key -> [lock, number of threads holding or waiting for it]
 _key_locks_guard = threading.Lock()
 
 
 @contextmanager
 def _locked(cache_path):
-    key = os.path.normcase(os.path.abspath(cache_path))
+    key = path_keys.key(cache_path)
     with _key_locks_guard:
         entry = _key_locks.setdefault(key, [threading.Lock(), 0])
         entry[1] += 1

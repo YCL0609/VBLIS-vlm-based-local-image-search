@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 
+import path_keys
 from starlette.datastructures import Headers, QueryParams
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -30,35 +31,70 @@ _UNAUTHORIZED = {"detail": "Missing or invalid API token"}
 _TOKEN_QUERY_RE = re.compile(r"([?&]token=)[^&\s\"]*")
 
 
+# Standalone runs (no Electron) keep one token in the data folder so restarts stay usable
+TOKEN_FILE_NAME = "api_token.txt"
+
+
+def token_file_path():
+    """Where a standalone run stores its token, or None if the data folder is unknown yet."""
+    try:
+        import paths
+    except ImportError:  # pragma: no cover - only during partial imports
+        return None
+    return paths.DATA_ROOT / TOKEN_FILE_NAME
+
+
 def resolve_api_token(environ=os.environ) -> str:
-    """The token from VBLIS_API_TOKEN, or a random one when it isn't set. There is no open mode."""
+    """The token from VBLIS_API_TOKEN, else one persisted in the data folder. There is no open mode.
+
+    Electron always passes the token it generated. A standalone `python main.py` / `run.py` has
+    nobody to hand a token to, so it reads (or creates, mode 0600) <data dir>/api_token.txt and
+    prints where it is; that keeps the token stable across restarts while staying local-only.
+    """
     token = (environ.get(API_TOKEN_ENV) or "").strip()
     if token:
         return token
-    print(
-        f"[Security] {API_TOKEN_ENV} is not set; using a random token, so only a client given "
-        f"that token can call the API. Set {API_TOKEN_ENV} to call the API yourself."
-    )
-    return secrets.token_hex(32)
+    return _standalone_api_token()
+
+
+def _standalone_api_token() -> str:
+    path = token_file_path()
+    if path is not None:
+        try:
+            existing = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            existing = ""
+        if len(existing) >= 32:
+            print(f"[Security] {API_TOKEN_ENV} is not set; using the token stored in {path}")
+            return existing
+    token = secrets.token_hex(32)
+    if path is not None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(token + "\n")
+            print(
+                f"[Security] {API_TOKEN_ENV} is not set; generated an API token and saved it to "
+                f"{path}. Send it as {API_TOKEN_HEADER}: <token>."
+            )
+            return token
+        except OSError as e:
+            print(
+                f"[Security] {API_TOKEN_ENV} is not set and {path} is not writable ({e}); using a "
+                f"random token for this run only."
+            )
+    else:
+        print(f"[Security] {API_TOKEN_ENV} is not set; using a random token for this run only.")
+    return token
 
 
 def is_within(path: str, roots) -> bool:
-    """True when path is one of roots or lies below one. Purely lexical (abspath + normcase), so
-    '..' is resolved and 'C:\\Photos2' is not inside 'C:\\Photos'. Symlinks/junctions are
-    deliberately not resolved: creating one needs local write access, which already implies file access."""
-    if not path or "\0" in path:
-        return False
-    try:
-        key = os.path.normcase(os.path.abspath(path))
-        for root in roots:
-            if not root:
-                continue
-            root_key = os.path.normcase(os.path.abspath(root))
-            if key == root_key or key.startswith(root_key.rstrip(os.sep) + os.sep):
-                return True
-    except (ValueError, OSError):
-        return False
-    return False
+    """True when path is one of roots or lies below one (see path_keys.is_within).
+
+    Kept here because every guard and router already imports it from security; the platform rules
+    (case sensitivity, macOS Unicode normalization) live in path_keys."""
+    return path_keys.is_within(path, roots)
 
 
 class TokenAuthMiddleware:

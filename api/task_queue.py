@@ -6,6 +6,7 @@ import threading
 from enum import Enum
 from typing import Optional, List, Dict, Any
 
+import path_keys
 import paths
 import cache_store
 
@@ -457,17 +458,15 @@ class TaskQueueManager:
 
     def is_folder_in_queue(self, folder_path: str) -> Optional[Dict[str, Any]]:
         """Check if a folder path is already in active task or pending queue."""
-        normalized = os.path.abspath(os.path.normpath(folder_path)).lower()
+        normalized = path_keys.key(folder_path)
         with self.lock:
             if self.active_task and self.active_task.status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
                 active_paths = [
-                    os.path.abspath(os.path.normpath(p)).lower()
+                    path_keys.key(p)
                     for p in self.active_task.payload.get("folder_paths", [])
                 ]
                 if self.active_task.payload.get("folder_path"):
-                    active_paths.append(
-                        os.path.abspath(os.path.normpath(self.active_task.payload["folder_path"])).lower()
-                    )
+                    active_paths.append(path_keys.key(self.active_task.payload["folder_path"]))
                 if normalized in active_paths:
                     return {
                         "is_active": True,
@@ -477,13 +476,11 @@ class TaskQueueManager:
 
             for idx, task in enumerate(self.pending_queue):
                 task_paths = [
-                    os.path.abspath(os.path.normpath(p)).lower()
+                    path_keys.key(p)
                     for p in task.payload.get("folder_paths", [])
                 ]
                 if task.payload.get("folder_path"):
-                    task_paths.append(
-                        os.path.abspath(os.path.normpath(task.payload["folder_path"])).lower()
-                    )
+                    task_paths.append(path_keys.key(task.payload["folder_path"]))
                 if normalized in task_paths:
                     return {
                         "is_active": False,

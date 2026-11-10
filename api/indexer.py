@@ -12,6 +12,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from model_manager import ModelManager
 import pathlib
+import path_keys
 import paths
 import media_sync
 import security
@@ -72,13 +73,13 @@ class _FileExistenceCache:
     on Windows). Meant to live for a single search, so listings are never reused across searches."""
 
     def __init__(self):
-        # normcased directory -> set of normcased file names; None means "listing failed, ask isfile"
+        # directory key -> set of file-name keys; None means "listing failed, ask isfile"
         self._listings = {}
 
     def _list_directory(self, directory):
         try:
             with os.scandir(directory or ".") as entries:
-                return {os.path.normcase(entry.name) for entry in entries if entry.is_file()}
+                return {path_keys.name_key(entry.name) for entry in entries if entry.is_file()}
         except (FileNotFoundError, NotADirectoryError):
             return set()
         except OSError:
@@ -86,13 +87,13 @@ class _FileExistenceCache:
 
     def isfile(self, path):
         directory, name = os.path.split(path)
-        key = os.path.normcase(directory)
+        key = path_keys.key(directory)
         if key not in self._listings:
             self._listings[key] = self._list_directory(directory)
         names = self._listings[key]
         if names is None:
             return os.path.isfile(path)
-        return os.path.normcase(name) in names
+        return path_keys.name_key(name) in names
 
 def _is_video(meta):
     # Image records written before video support have no media_type
@@ -112,10 +113,11 @@ def _read_metadatas(collection, ids, metas_by_id):
             metas_by_id.setdefault(record_id, {})
 
 def _video_source_key(path):
-    """What a video's frame ids carry in place of its path: the sha256 of its normalized, lower-cased path
-    (a pure function of the path, so a sha learned once stays valid)."""
-    normalized_path = os.path.abspath(os.path.normpath(path))
-    return hashlib.sha256(normalized_path.lower().encode("utf-8")).hexdigest()
+    """What a video's frame ids carry in place of its path: the sha256 of its comparison key (see
+    path_keys; a pure function of the path, so a sha learned once stays valid). The key, not a lower-case
+    copy, because Linux filesystems are case-sensitive: two videos whose paths differ only by case are two
+    different videos and must not share frame ids."""
+    return hashlib.sha256(path_keys.key(path).encode("utf-8")).hexdigest()
 
 def _video_sha(record_id):
     """The source key inside a video frame id (video:<sha>:<ms>); None when the id is not of that shape."""
@@ -164,7 +166,7 @@ def _walk_ranking(collection, ids, scores, cut, top_k, metas_by_id, file_exists,
         no metadata and is skipped, like an id that Chroma no longer has."""
     found = []
     items = 0
-    frames_by_video = {}  # normcased video path -> frames kept
+    frames_by_video = {}  # video path key -> frames kept
     pos = 0
     while pos < cut and items < top_k:
         end = pos + min(cut - pos, max(METADATA_CHUNK, 2 * (top_k - items)))
@@ -202,7 +204,7 @@ def _walk_ranking(collection, ids, scores, cut, top_k, metas_by_id, file_exists,
             if not path:
                 continue
             if _is_video(meta):
-                key = os.path.normcase(path)
+                key = path_keys.key(path)
                 kept = frames_by_video.get(key)
                 if kept is None:
                     if (items >= top_k or (record_filter is not None and not record_filter.allows_path(path, True))
@@ -263,9 +265,9 @@ def _walk_file_entries(top):
         except OSError:
             is_dir = False
         if is_dir:
-            if not is_macos_junk_dir(entry.name):
+            if not is_macos_junk_dir(entry.name) and path_keys.is_utf8_safe(entry.name):
                 subdirectories.append(entry)
-        elif not is_macos_junk_file(entry.name):
+        elif not is_macos_junk_file(entry.name) and path_keys.is_utf8_safe(entry.name):
             file_entries.append(entry)
     yield top, file_entries
     for entry in subdirectories:
@@ -568,7 +570,7 @@ class Indexer:
         unique = {}
         for folder in folders:
             path = os.path.abspath(os.path.normpath(folder))
-            unique.setdefault(os.path.normcase(path), path)
+            unique.setdefault(path_keys.key(path), path)
         missing = [path for path in unique.values() if not os.path.isdir(path)]
         if missing:
             print(f"[Notice] Indexer: skipping media details of folders that are not available: {', '.join(missing)}")
@@ -860,8 +862,7 @@ class Indexer:
             return 0
             
         try:
-            norm_folder = os.path.abspath(os.path.normpath(folder_path))
-            norm_folder_lower = norm_folder.lower()
+            norm_folder_key = path_keys.key(folder_path)
             self._remove_selected_folder(folder_path)
             
             results = self.collection.get(include=["metadatas"])
@@ -869,9 +870,7 @@ class Indexer:
             
             for i, meta in enumerate(results["metadatas"]):
                 if meta and "path" in meta:
-                    file_path = os.path.abspath(os.path.normpath(meta["path"]))
-                    file_path_lower = file_path.lower()
-                    if file_path_lower == norm_folder_lower or file_path_lower.startswith(norm_folder_lower + os.sep):
+                    if path_keys.is_under(path_keys.key(meta["path"]), norm_folder_key):
                         ids_to_delete.append(results["ids"][i])
             
             if ids_to_delete:
@@ -1342,11 +1341,11 @@ class Indexer:
             if existing_results:
                 for meta in existing_results.get("metadatas") or []:
                     if meta and meta.get("path") and meta.get("media_type", "image") != "video":
-                        existing_paths.add(os.path.normcase(os.path.normpath(meta["path"])))
+                        existing_paths.add(path_keys.key(meta["path"]))
             existing_video_entries = self._get_existing_video_entries(existing_results)
             
             # Filter out already indexed files
-            pending_files = [f for f in files_to_index if os.path.normcase(os.path.normpath(f)) not in existing_paths]
+            pending_files = [f for f in files_to_index if path_keys.key(f) not in existing_paths]
             self.indexed_files = len(files_to_index) - len(pending_files)
             if task_context:
                 task_context.update_progress(self.indexed_files, self.total_files, "Indexing items...")
@@ -1425,10 +1424,10 @@ class Indexer:
             known = {e["path"]: (e["id"], e["hash"], e["meta"]) for e in db_image_entries}
             # A record is stale when the scan did not find its file and the file is really gone (one stat per
             # undiscovered record only, so an unreadable subfolder cannot drop its records)
-            discovered_keys = {os.path.normcase(path) for path in disk_files + disk_video_files}
+            discovered_keys = {path_keys.key(path) for path in disk_files + disk_video_files}
             stale_entries = [
                 e for e in db_entries
-                if os.path.normcase(e["path"]) not in discovered_keys and not os.path.exists(e["path"])
+                if path_keys.key(e["path"]) not in discovered_keys and not os.path.exists(e["path"])
             ]
             stale_source_paths = {e["path"] for e in stale_entries}
             existing_video_entries = self._get_existing_video_entries(results)
@@ -1601,7 +1600,7 @@ class Indexer:
         isfile = file_exists.isfile
 
         def has_duplicate(path):
-            key = os.path.normcase(path)
+            key = path_keys.key(path)
             return ((exact is not None and exact.has_existing_partner(key, isfile))
                     or (visual is not None and visual.has_existing_partner(key, isfile)))
 
@@ -1757,10 +1756,10 @@ class Indexer:
         for result in formatted:
             if result["media_type"] == "video":
                 continue
-            own = os.path.normcase(result["path"]) if result.get("path") else None
+            own = path_keys.key(result["path"]) if result.get("path") else None
             partners = {}
             for path in itertools.chain(local.get(result["id"], ()), indexed.get(result["id"], ())):
-                key = os.path.normcase(path)
+                key = path_keys.key(path)
                 if key != own:
                     partners.setdefault(key, path)
             if partners:
@@ -1781,7 +1780,7 @@ class Indexer:
             for result in formatted:
                 if result["media_type"] == "video" or not result.get("path") or not result.get("hash"):
                     continue
-                own = os.path.normcase(result["path"])
+                own = path_keys.key(result["path"])
                 copies = {}
                 for key in level.keys_by_hash.get(result["hash"], ()):
                     if key != own and file_exists.isfile(level.path_by_key[key]):
@@ -1803,7 +1802,7 @@ class Indexer:
             for result in formatted:
                 if result["media_type"] == "video" or not result.get("path"):
                     continue
-                paths = [level.path_by_key[key] for key in level.partners(os.path.normcase(result["path"]))]
+                paths = [level.path_by_key[key] for key in level.partners(path_keys.key(result["path"]))]
                 paths = [path for path in paths if file_exists.isfile(path)]
                 if paths:
                     partners[result["id"]] = paths
@@ -1873,14 +1872,14 @@ class Indexer:
         record_filter = self._compile_filters(filters, collection, file_exists)
         facts = self.media_registry.snapshot().facts
 
-        # normcased path -> [path of its first record, is_video, [(record_id, meta)]]: one record of an image,
+        # path key -> [path of its first record, is_video, [(record_id, meta)]]: one record of an image,
         # every frame record of a video
         entries = {}
         for record_id, meta in zip(scan.get("ids") or [], scan.get("metadatas") or []):
             path = meta.get("path") if meta else None
             if not path:
                 continue
-            key = os.path.normcase(path)
+            key = path_keys.key(path)
             is_video = _is_video(meta)
             entry = entries.get(key)
             if entry is None:
@@ -1888,7 +1887,7 @@ class Indexer:
             elif is_video and entry[1]:
                 entry[2].append((record_id, meta))
 
-        items = []  # (normcased path, taken_at or None, is_video, records)
+        items = []  # (path key, taken_at or None, is_video, records)
         for key, (path, is_video, records) in entries.items():
             if record_filter is not None and not record_filter.allows_path(path, is_video):
                 continue
@@ -1948,11 +1947,11 @@ class Indexer:
                     continue
                 if not file_exists.isfile(path):
                     continue
-                paths_by_hash.setdefault(meta["hash"], {}).setdefault(os.path.normcase(path), path)
+                paths_by_hash.setdefault(meta["hash"], {}).setdefault(path_keys.key(path), path)
         except Exception as e:
             print(f"[Warning] Indexer: could not look up exact copies of the search results: {e}")
             return
         for result in head:
-            own = os.path.normcase(result["path"]) if result.get("path") else None
+            own = path_keys.key(result["path"]) if result.get("path") else None
             by_key = paths_by_hash.get(result.get("hash"), {})
             result["copies"] = [by_key[key] for key in sorted(by_key) if key != own]

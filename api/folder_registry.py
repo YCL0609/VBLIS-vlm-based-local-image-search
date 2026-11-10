@@ -2,6 +2,7 @@ import os
 import json
 import pathlib
 import threading
+import path_keys
 from security import is_within
 from media_image import IMAGE_EXTENSIONS, is_macos_junk_dir, is_macos_junk_file
 from media_video import VIDEO_EXTENSIONS
@@ -56,27 +57,26 @@ class FolderRegistry:
         return self.selected_folders_by_collection.setdefault(collection_name, set())
 
     def add(self, collection_name, folder_path: str):
-        norm_new = os.path.abspath(os.path.normpath(folder_path))
-        norm_new_lower = norm_new.lower()
+        norm_new = path_keys.normalize(folder_path)
+        new_key = path_keys.key(norm_new)
         existing = self.selected(collection_name)
 
         for ex in list(existing):
-            ex_lower = os.path.abspath(os.path.normpath(ex)).lower()
-            if norm_new_lower == ex_lower or norm_new_lower.startswith(ex_lower + os.sep):
+            ex_key = path_keys.key(ex)
+            if path_keys.is_under(new_key, ex_key):
                 return
-            if ex_lower.startswith(norm_new_lower + os.sep):
+            if path_keys.is_under(ex_key, new_key):
                 existing.discard(ex)
 
         existing.add(norm_new)
         self.save()
 
     def remove(self, collection_name, folder_path: str):
-        norm_target = os.path.abspath(os.path.normpath(folder_path)).lower()
+        target_key = path_keys.key(folder_path)
         existing = self.selected(collection_name)
         to_remove = {
             ex for ex in existing
-            if os.path.abspath(os.path.normpath(ex)).lower() == norm_target
-            or os.path.abspath(os.path.normpath(ex)).lower().startswith(norm_target + os.sep)
+            if path_keys.is_under(path_keys.key(ex), target_key)
         }
         for r in to_remove:
             existing.discard(r)
@@ -120,13 +120,14 @@ class FolderRegistry:
             unlisted_parents = set()
             for meta in (results or {}).get("metadatas") or []:
                 if meta and "path" in meta:
-                    p = os.path.abspath(os.path.normpath(meta["path"]))
+                    p = path_keys.normalize(meta["path"])
                     if not is_within(p, roots):
                         unlisted_parents.add(os.path.dirname(p))
             added = False
             kept = []
             for parent in sorted(unlisted_parents, key=lambda x: len(x)):
-                if not any(parent.lower().startswith(top.lower() + os.sep) for top in kept):
+                parent_key = path_keys.key(parent)
+                if not any(path_keys.is_under(parent_key, path_keys.key(top)) for top in kept):
                     kept.append(parent)
                     selected_folders.add(parent)
                     added = True
@@ -148,17 +149,18 @@ class FolderRegistry:
             db_items = []
             for meta in results["metadatas"]:
                 if meta and "path" in meta:
-                    p = os.path.abspath(os.path.normpath(meta["path"]))
+                    p = path_keys.normalize(meta["path"])
                     m_type = meta.get("media_type", "image")
-                    key = (p.lower(), m_type)
-                    if key not in seen_db_keys:
-                        seen_db_keys.add(key)
-                        db_items.append({"path": p, "media_type": m_type})
+                    item_key = path_keys.key(p)
+                    composite = (item_key, m_type)
+                    if composite not in seen_db_keys:
+                        seen_db_keys.add(composite)
+                        db_items.append({"path": p, "key": item_key, "media_type": m_type})
 
             if not db_items:
                 return []
 
-            db_paths = [item["path"] for item in db_items]
+            db_keys = {item["key"] for item in db_items}
 
             # 1. Start with persisted selected folders for this collection
             selected_folders = self.selected(collection.name)
@@ -166,9 +168,9 @@ class FolderRegistry:
             active_folders = set()
 
             for sf in list(selected_folders):
-                sf_norm = os.path.abspath(os.path.normpath(sf))
-                sf_lower = sf_norm.lower()
-                has_items = any(p.lower() == sf_lower or p.lower().startswith(sf_lower + os.sep) for p in db_paths)
+                sf_norm = path_keys.normalize(sf)
+                sf_key = path_keys.key(sf_norm)
+                has_items = any(path_keys.is_under(item_key, sf_key) for item_key in db_keys)
                 if has_items:
                     active_folders.add(sf_norm)
                 elif not os.path.isdir(sf_norm):
@@ -176,34 +178,34 @@ class FolderRegistry:
                     # started), or /image would 403 its files until the first batch lands
                     selected_folders.discard(sf)
 
-            # 2. For any db_paths not covered by active selected folders, find their topmost common roots
-            covered_paths = set()
+            # 2. For any db paths not covered by active selected folders, find their topmost common roots
+            covered_keys = set()
             for sf in active_folders:
-                sf_lower = sf.lower()
-                for p in db_paths:
-                    if p.lower() == sf_lower or p.lower().startswith(sf_lower + os.sep):
-                        covered_paths.add(p)
+                sf_key = path_keys.key(sf)
+                for item_key in db_keys:
+                    if path_keys.is_under(item_key, sf_key):
+                        covered_keys.add(item_key)
 
-            uncovered_paths = [p for p in db_paths if p not in covered_paths]
-            if uncovered_paths:
-                uncovered_parents = set(os.path.dirname(p) for p in uncovered_paths)
-                sorted_parents = sorted(uncovered_parents, key=lambda x: len(x))
-                topmost_parents = set()
-                for parent in sorted_parents:
-                    parent_lower = parent.lower()
-                    if not any(parent_lower.startswith(top.lower() + os.sep) for top in topmost_parents):
-                        topmost_parents.add(parent)
+            uncovered_parents = set()
+            for item in db_items:
+                if item["key"] not in covered_keys:
+                    uncovered_parents.add(os.path.dirname(item["path"]))
+            if uncovered_parents:
+                topmost_parents = {}
+                for parent in sorted(uncovered_parents, key=lambda x: len(x)):
+                    parent_key = path_keys.key(parent)
+                    if not any(path_keys.is_under(parent_key, top_key) for top_key in topmost_parents):
+                        topmost_parents[parent_key] = parent
 
-                for parent in topmost_parents:
+                for parent in topmost_parents.values():
                     active_folders.add(parent)
                     selected_folders.add(parent)
 
             # 3. Collapse any nested subfolders (parent folder takes precedence as root)
             final_root_folders = set()
-            sorted_active = sorted(active_folders, key=lambda x: len(x))
-            for f in sorted_active:
-                f_lower = f.lower()
-                if not any(f_lower.startswith(top.lower() + os.sep) for top in final_root_folders):
+            for f in sorted(active_folders, key=lambda x: len(x)):
+                f_key = path_keys.key(f)
+                if not any(path_keys.is_under(f_key, path_keys.key(top)) for top in final_root_folders):
                     final_root_folders.add(f)
 
             # This runs on every poll, so only rewrite indexed_folders.json when the selection changed
@@ -213,11 +215,8 @@ class FolderRegistry:
             # 4. Build hierarchical tree with subfolders and file counts for each root folder
             output = []
             for root_path in sorted(final_root_folders, key=lambda x: x.lower()):
-                root_lower = root_path.lower()
-                root_items = [
-                    it for it in db_items
-                    if it["path"].lower() == root_lower or it["path"].lower().startswith(root_lower + os.sep)
-                ]
+                root_key = path_keys.key(root_path)
+                root_items = [it for it in db_items if path_keys.is_under(it["key"], root_key)]
 
                 # Scan disk file counts for this root folder tree
                 disk_counts_by_dir = {}
@@ -225,8 +224,8 @@ class FolderRegistry:
                     try:
                         for r, dir_names, f_list in os.walk(root_path):
                             dir_names[:] = [d for d in dir_names if not is_macos_junk_dir(d)]
-                            r_norm = os.path.abspath(os.path.normpath(r))
-                            r_lower_dir = r_norm.lower()
+                            r_norm = path_keys.normalize(r)
+                            r_key = path_keys.key(r_norm)
                             imgs = 0
                             vids = 0
                             for fname in f_list:
@@ -238,47 +237,46 @@ class FolderRegistry:
                                 elif ext in VIDEO_EXTENSIONS:
                                     vids += 1
                             if imgs > 0 or vids > 0:
-                                disk_counts_by_dir[r_lower_dir] = {"images": imgs, "videos": vids}
+                                disk_counts_by_dir[r_key] = {"images": imgs, "videos": vids}
                     except Exception:
                         pass
 
-                subfolder_data = {}
+                subfolder_data = {}  # directory key -> {"path": path as recorded, "images": n, "videos": n}
                 direct_images = 0
                 direct_videos = 0
 
                 for it in root_items:
                     file_dir = os.path.dirname(it["path"])
+                    file_dir_key = path_keys.key(file_dir)
                     is_img = it["media_type"] != "video"
 
-                    if file_dir.lower() == root_lower:
+                    if file_dir_key == root_key:
                         if is_img:
                             direct_images += 1
                         else:
                             direct_videos += 1
                     else:
-                        if file_dir not in subfolder_data:
-                            subfolder_data[file_dir] = {"images": 0, "videos": 0}
+                        counts = subfolder_data.get(file_dir_key)
+                        if counts is None:
+                            counts = subfolder_data[file_dir_key] = {"path": file_dir, "images": 0, "videos": 0}
                         if is_img:
-                            subfolder_data[file_dir]["images"] += 1
+                            counts["images"] += 1
                         else:
-                            subfolder_data[file_dir]["videos"] += 1
+                            counts["videos"] += 1
 
                 subfolders_list = []
-                for sub_dir, counts in subfolder_data.items():
+                for sub_key, counts in subfolder_data.items():
+                    sub_dir = counts["path"]
                     rel = os.path.relpath(sub_dir, root_path)
                     depth = len(rel.split(os.sep))
-                    sub_norm = os.path.abspath(os.path.normpath(sub_dir))
-                    sub_lower = sub_norm.lower()
 
-                    direct_disk_imgs = disk_counts_by_dir.get(sub_lower, {}).get("images", counts["images"])
-                    direct_disk_vids = disk_counts_by_dir.get(sub_lower, {}).get("videos", counts["videos"])
+                    direct_disk_imgs = disk_counts_by_dir.get(sub_key, {}).get("images", counts["images"])
+                    direct_disk_vids = disk_counts_by_dir.get(sub_key, {}).get("videos", counts["videos"])
                     sub_disk_imgs = sum(
-                        c["images"] for d, c in disk_counts_by_dir.items()
-                        if d == sub_lower or d.startswith(sub_lower + os.sep)
+                        c["images"] for d, c in disk_counts_by_dir.items() if path_keys.is_under(d, sub_key)
                     )
                     sub_disk_vids = sum(
-                        c["videos"] for d, c in disk_counts_by_dir.items()
-                        if d == sub_lower or d.startswith(sub_lower + os.sep)
+                        c["videos"] for d, c in disk_counts_by_dir.items() if path_keys.is_under(d, sub_key)
                     )
 
                     subfolders_list.append({
@@ -328,11 +326,11 @@ class FolderRegistry:
         if not os.path.isdir(folder_path):
             raise ValueError("Folder does not exist or is not accessible.")
 
-        normalized_folder = os.path.abspath(os.path.normpath(folder_path))
-        norm_folder_lower = normalized_folder.lower()
+        normalized_folder = path_keys.normalize(folder_path)
+        folder_key = path_keys.key(normalized_folder)
 
         # 1. Fetch all indexed paths for this folder from ChromaDB
-        indexed_map = {} # path_lower -> {"path": meta_path, "media_type": meta_type}
+        indexed_map = {} # path key -> {"path": meta_path, "media_type": meta_type}
         if collection is not None:
             try:
                 res = collection.get(include=["metadatas"])
@@ -340,11 +338,11 @@ class FolderRegistry:
                     for meta in res["metadatas"]:
                         if meta and "path" in meta:
                             raw_p = meta["path"]
-                            p_norm = os.path.abspath(os.path.normpath(raw_p))
-                            p_lower = p_norm.lower()
-                            if p_lower == norm_folder_lower or p_lower.startswith(norm_folder_lower + os.sep):
-                                if p_lower not in indexed_map:
-                                    indexed_map[p_lower] = {
+                            p_norm = path_keys.normalize(raw_p)
+                            p_key = path_keys.key(p_norm)
+                            if path_keys.is_under(p_key, folder_key):
+                                if p_key not in indexed_map:
+                                    indexed_map[p_key] = {
                                         "path": p_norm,
                                         "media_type": meta.get("media_type", "image")
                                     }
@@ -360,16 +358,16 @@ class FolderRegistry:
         for root, dir_names, files in os.walk(normalized_folder):
             dir_names[:] = [d for d in dir_names if not is_macos_junk_dir(d)]
             for file in files:
-                if is_macos_junk_file(file):
+                if is_macos_junk_file(file) or not path_keys.is_utf8_safe(file):
                     continue
                 extension = os.path.splitext(file)[1].lower()
                 if extension not in IMAGE_EXTENSIONS and extension not in VIDEO_EXTENSIONS:
                     continue
 
                 file_path = os.path.join(root, file)
-                p_norm = os.path.abspath(os.path.normpath(file_path))
-                p_lower = p_norm.lower()
-                seen_disk_paths.add(p_lower)
+                p_norm = path_keys.normalize(file_path)
+                p_key = path_keys.key(p_norm)
+                seen_disk_paths.add(p_key)
 
                 media_type = "image" if extension in IMAGE_EXTENSIONS else "video"
 
@@ -383,7 +381,7 @@ class FolderRegistry:
                 else:
                     video_count += 1
 
-                is_indexed = p_lower in indexed_map
+                is_indexed = p_key in indexed_map
 
                 items.append({
                     "name": file,
@@ -399,8 +397,8 @@ class FolderRegistry:
 
         # 3. Detect ghost records (in vector DB, but no longer on disk)
         missing_on_disk_items = []
-        for p_lower, info in indexed_map.items():
-            if p_lower not in seen_disk_paths:
+        for ghost_key, info in indexed_map.items():
+            if ghost_key not in seen_disk_paths:
                 ghost_path = info["path"]
                 ghost_name = os.path.basename(ghost_path) or ghost_path
                 ghost_ext = os.path.splitext(ghost_path)[1].lower()

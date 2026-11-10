@@ -141,7 +141,7 @@ def _prune(registry, known, unique, roots) -> int:
     live_roots = [root for root in roots if root and os.path.isdir(root)]
     if not live_roots:
         return 0
-    # Stored keys are normcase(abspath), so comparing them with the root keys matches security.is_within
+    # Stored keys and root keys both come from path_keys.key(), so this comparison matches security.is_within
     root_keys = [registry.key_for(root).rstrip(os.sep) for root in live_roots]
     gone = [
         key for key, row in known.items()

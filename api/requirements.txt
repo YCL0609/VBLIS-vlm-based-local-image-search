@@ -1,5 +1,10 @@
-# PyTorch CUDA 12.4 index
---extra-index-url https://download.pytorch.org/whl/cu124
+# PyTorch comes from a wheel index that depends on the platform and the GPU, so it is not pinned here:
+#   Linux (x86_64, PyPI default wheel)  pip install torch        # CUDA build, also runs on CPU
+#   Linux, CPU only                     pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   macOS                               pip install torch        # Metal (MPS) build
+#   Windows + NVIDIA                    pip install torch --index-url https://download.pytorch.org/whl/cu124
+# The Windows development venv this repository was built on used the cu124 index for every package; that
+# belongs in the build script, not in a requirements file shared by three platforms.
 
 # Core framework & API
 fastapi

@@ -1,4 +1,5 @@
 import os
+import sys
 import hashlib
 import pathlib
 import re
@@ -122,11 +123,42 @@ def _close_quietly(container):
     except Exception:
         pass
 
+# Hardware decode targets, per platform, as (primary, secondary) stages. The names are those PyAV/FFmpeg know
+# on each system: d3d11va/qsv/dxva2/d3d12va/amf/cuda on Windows, videotoolbox on macOS, vaapi/cuda/vdpau on
+# Linux. A stage that is not compiled into the installed PyAV, or has no usable device, simply never opens and
+# is skipped after _HW_MAX_FAILURES failures, so the CPU path always remains the safety net.
+_HW_STAGES = {
+    "win32": (["d3d11va", "qsv"], ["cuda", "dxva2", "d3d12va", "amf"]),
+    "darwin": ([], ["videotoolbox"]),
+    "linux": (["vaapi"], ["cuda", "vdpau"]),
+}
+
+
+def _vaapi_render_device():
+    """A DRM render node for VA-API (/dev/dri/renderD128 and on). None lets FFmpeg pick its own default, which
+    is what happens when the caller hands it no device at all."""
+    for index in range(128, 136):
+        device_path = f"/dev/dri/renderD{index}"
+        if os.path.exists(device_path):
+            return device_path
+    return None
+
+
+def _hwaccel_for(target):
+    """The HWAccel for one target. VA-API is the only one that needs a device node named explicitly: without
+    one it fails to initialise on most drivers even when the GPU is perfectly usable."""
+    if target == "vaapi":
+        device_path = _vaapi_render_device()
+        if device_path:
+            return HWAccel(target, device=device_path)
+    return HWAccel(target)
+
+
 def _open_hardware(filepath, target, label):
     """Open with one hardware target; return (container, stream, label) or None, closing a failed container."""
     container = None
     try:
-        hw = HWAccel(target)
+        hw = _hwaccel_for(target)
         container = av.open(filepath, hwaccel=hw)
         if container.streams.video:
             stream = container.streams.video[0]
@@ -158,9 +190,10 @@ def _open_cpu(filepath):
 
 def open_video_cascade(filepath):
     """Open video using a 3-stage cascading hardware acceleration pipeline:
-    Stage 1: iGPU priority (D3D11VA / QSV) - preserves dGPU VRAM for AI models.
-    Stage 2: dGPU secondary (CUDA / DXVA2 / D3D12VA / AMF) - discrete GPU hardware decode.
-    Stage 3: CPU software decoding (libavcodec) - universal safety net for exotic/old codecs.
+    Stage 1: primary hardware targets of this platform (see _HW_STAGES).
+    Stage 2: secondary hardware targets of this platform.
+    Stage 3: CPU software decoding (libavcodec) - universal safety net for exotic/old codecs, and the only
+             stage on a platform without hardware decoding.
     The hardware target that last worked is tried first, then the stages in order; targets that never
     worked on this machine are skipped after repeated failures.
     """
@@ -169,13 +202,15 @@ def open_video_cascade(filepath):
     except Exception:
         available_hw = set()
 
+    primary_targets, secondary_targets = _HW_STAGES.get(sys.platform, ([], []))
+
     candidates = []
-    for target in ["d3d11va", "qsv"]:
+    for target in primary_targets:
         if target in available_hw:
-            candidates.append((target, f"hw-{target} (iGPU priority)"))
-    for target in ["cuda", "dxva2", "d3d12va", "amf"]:
+            candidates.append((target, f"hw-{target} (primary)"))
+    for target in secondary_targets:
         if target in available_hw:
-            candidates.append((target, f"hw-{target} (dGPU secondary)"))
+            candidates.append((target, f"hw-{target} (secondary)"))
 
     preferred = _preferred_decoder
     candidates.sort(key=lambda candidate: candidate[0] != preferred)  # stable: stage order otherwise
@@ -579,7 +614,7 @@ def _video_date(metadata):
             try:
                 local = moment.replace(tzinfo=timezone(utc_offset)).astimezone()
             except (OSError, OverflowError, ValueError):
-                continue  # Windows cannot convert a time before 1970
+                continue  # Windows cannot convert a time before 1970; POSIX can, the guard is harmless
             return _format_taken(local.replace(tzinfo=None)), _format_offset(local.utcoffset())
         return _format_taken(moment), offset
     return None, None

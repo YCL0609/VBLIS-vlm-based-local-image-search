@@ -16,6 +16,7 @@ import gc
 import time
 import threading
 from model_downloader import ModelDownloader
+import devices
 from search_scoring import ScoreParams, read_score_params
 
 try:
@@ -60,9 +61,8 @@ class ModelManager:
         
         # Read device and performance preferences from environment
         env_use_gpu = os.getenv("USE_GPU", "True").lower() == "true"
-        cuda_available = torch.cuda.is_available()
-        self.use_gpu = env_use_gpu and cuda_available
-        self.device = "cuda" if self.use_gpu else "cpu"
+        self.device = devices.preferred() if env_use_gpu else devices.CPU
+        self.use_gpu = self.device != devices.CPU
         
         try:
             val = int(os.getenv("BATCH_SIZE", "0"))
@@ -76,7 +76,7 @@ class ModelManager:
             hub_path = paths.HUB_DIR
         self.downloader = ModelDownloader(hub_path)
         
-        print(f"ModelManager initialized on {self.device} (Request GPU: {env_use_gpu}, Available: {cuda_available}, Configured Batch: {self.batch_size}, Precision Mode: {self.precision_mode})")
+        print(f"ModelManager initialized on {devices.label(self.device)} (Request GPU: {env_use_gpu}, Accelerators: {devices.available() or 'none'}, Configured Batch: {self.batch_size}, Precision Mode: {self.precision_mode})")
         self.is_loading_model = False
         self.oom_triggered = False
         self.oom_triggered_count = 0
@@ -96,11 +96,11 @@ class ModelManager:
             return self.batch_size
             
         # batch_size == 0 -> Auto Dynamic Calculation
-        if not self.use_gpu or not torch.cuda.is_available():
-            return 8  # CPU processing default
-            
+        total_vram_mb = devices.total_memory_mb(self.device) if self.use_gpu else None
+        if total_vram_mb is None:
+            return 8  # CPU processing default, and any backend that reports no memory budget
+
         try:
-            total_vram_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
             model_id = (self.current_model_id or "").lower()
             is_large_model = "so400m" in model_id or "384" in model_id or "naflex" in model_id
             
@@ -114,19 +114,12 @@ class ModelManager:
             return 16
 
     def check_fp16_support(self) -> bool:
-        if not torch.cuda.is_available():
-            return False
-        try:
-            major, minor = torch.cuda.get_device_capability()
-            # Compute capability 7.5+ (Turing / Ampere / Ada Lovelace) has native FP16 Tensor Cores
-            return major > 7 or (major == 7 and minor >= 5)
-        except Exception:
-            return False
+        """Whether this accelerator does FP16 natively (CUDA 7.5+, any MPS GPU). False on the CPU: users may
+        still force fp16 there, which is why get_active_precision() honours PRECISION_MODE=fp16."""
+        return devices.supports_fp16(self.device)
 
     def get_gpu_name(self) -> str:
-        if torch.cuda.is_available():
-            return torch.cuda.get_device_name(0)
-        return "N/A"
+        return devices.name(self.device)
 
     def get_active_precision(self) -> str:
         if self.precision_mode == "fp16":
@@ -232,8 +225,7 @@ class ModelManager:
                 self.current_model_id = None
                 del old_model
                 del old_processor
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                devices.empty_cache(self.device)
                 gc.collect()
 
             self.is_loading_model = True
@@ -302,11 +294,15 @@ class ModelManager:
             return {"status": "error", "message": f"Failed to reload model for precision {mode}: {str(e)}"}
         return {"status": "success", "message": f"Precision set to {mode}"}
 
-    def set_device(self, use_gpu: bool):
-        """Toggle GPU usage and reload current model if necessary."""
-        cuda_available = torch.cuda.is_available()
-        new_use_gpu = use_gpu and cuda_available
-        new_device = "cuda" if new_use_gpu else "cpu"
+    def set_device(self, use_gpu: bool, requested_device: Optional[str] = None):
+        """Toggle GPU usage and reload the current model if necessary. `requested_device` names a specific
+        accelerator ("cuda" / "mps"); when it is not available the CPU is used, so the settings screen can
+        report what it got rather than fail."""
+        if requested_device in devices.available():
+            new_device = requested_device
+        else:
+            new_device = devices.preferred() if use_gpu else devices.CPU
+        new_use_gpu = new_device != devices.CPU
         
         if self.device == new_device:
             return {"status": "success", "message": f"Device already set to {self.device}", "device": self.device}
@@ -348,8 +344,7 @@ class ModelManager:
             if old_model is not None:
                 del old_model
                 del old_processor
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                devices.empty_cache(self.device)
                 gc.collect()
             print("Model unloaded successfully.")
 
@@ -472,13 +467,15 @@ class ModelManager:
         if any(item.model_id != model_id for item in items):
             raise RuntimeError("The active model changed while images were being prepared. Please retry.")
 
-        # VRAM Guard: Prevent Windows WDDM from spilling dedicated VRAM allocations into System Shared Memory
+        # VRAM Guard: Prevent Windows WDDM from spilling dedicated VRAM allocations into System Shared Memory.
+        # Only CUDA reports free device memory, so on every other backend the guard does not run.
         run_singly = False
-        if self.use_gpu and torch.cuda.is_available() and len(items) > 1:
+        mem_info = devices.mem_info(self.device)
+        if self.use_gpu and mem_info is not None and len(items) > 1:
             try:
-                free_bytes, total_bytes = torch.cuda.mem_get_info()
-                reserved_bytes = torch.cuda.memory_reserved()
-                allocated_bytes = torch.cuda.memory_allocated()
+                free_bytes, total_bytes = mem_info
+                reserved_bytes = devices.memory_reserved(self.device)
+                allocated_bytes = devices.memory_allocated(self.device)
                 cached_free = max(0, reserved_bytes - allocated_bytes)
                 usable_free = free_bytes + cached_free
 
@@ -486,11 +483,11 @@ class ModelManager:
                 min_free = max(850 * 1024 * 1024, int(total_bytes * 0.15))
 
                 if free_bytes < min_free or usable_free < min_free:
-                    torch.cuda.empty_cache()
+                    devices.empty_cache(self.device)
                     gc.collect()
-                    free_bytes, total_bytes = torch.cuda.mem_get_info()
-                    reserved_bytes = torch.cuda.memory_reserved()
-                    allocated_bytes = torch.cuda.memory_allocated()
+                    free_bytes, total_bytes = devices.mem_info(self.device) or (0, 0)
+                    reserved_bytes = devices.memory_reserved(self.device)
+                    allocated_bytes = devices.memory_allocated(self.device)
                     usable_free = free_bytes + max(0, reserved_bytes - allocated_bytes)
 
                     if free_bytes < min_free or usable_free < min_free:
@@ -529,7 +526,7 @@ class ModelManager:
 
             active_precision = self.get_active_precision()
             if active_precision == "fp16" and self.use_gpu:
-                with torch.autocast("cuda", dtype=torch.float16):
+                with devices.autocast(self.device):
                     image_features = model.get_image_features(**inputs)
             else:
                 image_features = model.get_image_features(**inputs)
@@ -545,11 +542,12 @@ class ModelManager:
             image_features = image_features / image_features.norm(p=2, dim=-1, keepdim=True)
             return image_features.cpu().numpy().tolist()
 
-        except torch.cuda.OutOfMemoryError as oom:
+        except Exception as oom:
+            if not devices.is_out_of_memory(oom):
+                raise
             self.oom_triggered = True
             self.oom_triggered_count += 1
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            devices.empty_cache(self.device)
             gc.collect()
 
             if len(items) > 1:
@@ -627,7 +625,7 @@ class ModelManager:
         
         print(f"Inference session (Text) on: {model_device}")
         if self._text_tower_is_half(model):
-            with torch.autocast("cuda", dtype=torch.float16):
+            with devices.autocast(self.device):
                 text_features = model.get_text_features(**inputs)
         else:
             text_features = model.get_text_features(**inputs)
