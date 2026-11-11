@@ -6,13 +6,12 @@ from fastapi import FastAPI
 # Importing app_state runs bootstrap (env, HF_HOME, data migration) before anything loads transformers
 import app_state
 import security
-from bootstrap import API_TOKEN
 from routers import indexing, media, models, queue, search, settings
 
 app = FastAPI(title="Local Image Search API", lifespan=app_state.lifespan)
 
-# Only clients holding the token (the Electron app passes it via env) may call the API
-security.install(app, API_TOKEN)
+# Local-only hardening: Host/CORS checks and the image upload cap (see security.py)
+security.install(app)
 
 for _module in (settings, search, indexing, queue, models, media):
     app.include_router(_module.router)
@@ -23,14 +22,11 @@ API_HOST = os.getenv("VBLIS_API_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("VBLIS_API_PORT", "8000"))
 
 def _announce(host: str, port: int) -> None:
-    """Tell a standalone user where the API is and where the client token lives."""
+    """Tell a standalone user where the API is and where its data lives."""
     import paths
 
     print(f"[VBLIS] API listening on http://{host}:{port}", flush=True)
     print(f"[VBLIS] Data folder: {paths.DATA_ROOT}", flush=True)
-    token_path = security.token_file_path()
-    if not os.getenv(security.API_TOKEN_ENV) and token_path is not None:
-        print(f"[VBLIS] Client token: {token_path} (send as {security.API_TOKEN_HEADER})", flush=True)
 
 
 if __name__ == "__main__":

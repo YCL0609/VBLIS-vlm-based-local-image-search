@@ -2,7 +2,6 @@
 import bootstrap
 import os
 import paths
-import security
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from model_manager import ModelManager
@@ -15,8 +14,6 @@ task_queue = TaskQueueManager(indexer, persistence_path=str(paths.DATA_DIR / "ta
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # uvicorn has configured logging by now; keep ?token= out of its access log
-    security.install_access_log_redaction()
     # Initialize indexer and models gracefully
     print("Starting API backend...")
     active_model = os.getenv("ACTIVE_MODEL", "google/siglip2-base-patch16-224")

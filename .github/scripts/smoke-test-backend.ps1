@@ -1,8 +1,8 @@
 <#
 Smoke-tests the frozen backend before it is packaged: starts api.exe the way the app does, waits
-for an authorized GET /models to return 200, then checks that a request without the token gets
-401. On failure it prints the backend's output and exits 1. Runs in Windows PowerShell 5.1 and 7,
-so it can be run locally against a PyInstaller build too:
+for GET /models to return 200 and checks that it listed models. On failure it prints the
+backend's output and exits 1. Runs in Windows PowerShell 5.1 and 7, so it can be run locally
+against a PyInstaller build too:
   powershell -NoProfile -ExecutionPolicy Bypass -File .github\scripts\smoke-test-backend.ps1 -ExePath api\dist\api\api.exe
 #>
 param(
@@ -28,20 +28,16 @@ if (Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyCont
     exit 1
 }
 
-$token = [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
-if ($env:GITHUB_ACTIONS) { Write-Output "::add-mask::$token" }
-
 # Inherited by api.exe. VBLIS_DATA_DIR is essential: unset, the frozen backend keeps its data in
 # the dist folder itself, which electron-builder packages next.
 $env:VBLIS_DATA_DIR = Join-Path $work "data"
-$env:VBLIS_API_TOKEN = $token
 $env:HF_HUB_OFFLINE = "1"
 # When set, parent_watch.py exits the backend as soon as its stdin is at EOF
 Remove-Item Env:VBLIS_EXIT_WITH_PARENT -ErrorAction SilentlyContinue
 
-function Invoke-Models([hashtable]$Headers) {
+function Invoke-Models {
     try {
-        $r = Invoke-WebRequest -Uri $url -Headers $Headers -UseBasicParsing -TimeoutSec 10
+        $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10
         return @{ Status = [int]$r.StatusCode; Body = [string]$r.Content }
     } catch {
         # An HTTP error carries a response; "not listening yet" doesn't (status 0)
@@ -65,20 +61,15 @@ Write-Output "Started api.exe (PID $($proc.Id)); waiting up to $TimeoutSec s for
 try {
     while ($true) {
         if ($proc.HasExited) { $failure = "api.exe exited with code $($proc.ExitCode) before it answered"; break }
-        $authorized = Invoke-Models @{ "X-VBLIS-Token" = $token }
-        if ($authorized.Status -eq 200) { break }
-        if ($authorized.Status -ne 0) { $failure = "GET /models with the token returned $($authorized.Status)"; break }
+        $response = Invoke-Models
+        if ($response.Status -eq 200) { break }
+        if ($response.Status -ne 0) { $failure = "GET /models returned $($response.Status)"; break }
         if ($clock.Elapsed.TotalSeconds -ge $TimeoutSec) { $failure = "no answer within $TimeoutSec s"; break }
         Start-Sleep -Seconds 2
     }
     if (-not $failure) {
-        Write-Output ("GET /models with the token: 200 after {0:N0} s" -f $clock.Elapsed.TotalSeconds)
-        if (-not ($authorized.Body | ConvertFrom-Json).models) { $failure = "GET /models listed no models" }
-    }
-    if (-not $failure) {
-        $anonymous = Invoke-Models @{}
-        if ($anonymous.Status -eq 401) { Write-Output "GET /models without the token: 401" }
-        else { $failure = "GET /models without the token returned $($anonymous.Status), expected 401" }
+        Write-Output ("GET /models: 200 after {0:N0} s" -f $clock.Elapsed.TotalSeconds)
+        if (-not ($response.Body | ConvertFrom-Json).models) { $failure = "GET /models listed no models" }
     }
 } finally {
     # Always: a backend that outlives the step keeps the step from finishing (inherited handles)

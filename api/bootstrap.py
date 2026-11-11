@@ -15,7 +15,6 @@ pillow_heif.register_heif_opener()
 
 # Ensure we load the .env from the data root (see paths.py), and strictly enforce HF_HOME
 import paths
-import security
 # Packaged builds only: move data an older build kept in the install folder (before anything opens it)
 try:
     _migration = paths.migrate_legacy_data()
@@ -26,8 +25,6 @@ if "failed" in _migration.values():
     # next launch retries the move instead of shadowing the old copy forever
     failed = ", ".join(name for name, outcome in _migration.items() if outcome == "failed")
     sys.exit(f"[DataMigration] Could not move {failed} into {paths.DATA_ROOT}; not starting.")
-# The token comes only from the launching process, never from .env (which overrides the environment)
-API_TOKEN = security.resolve_api_token()
 load_dotenv(paths.ENV_FILE, override=True)
 os.environ["HF_HOME"] = str(paths.MODELS_DIR)
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "30"

@@ -109,10 +109,11 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
-app/dist/
-app/dist-built/
-app/dist-electron/
-app/node_modules/
+vsite/dist/
+vsite/node_modules/
+electron/dist/
+electron/dist-built/
+electron/node_modules/
 api/.venv/
 api/__pycache__/
 api/build/

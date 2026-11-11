@@ -1,16 +1,11 @@
 """Start the backend on its own, without Electron.
 
-Electron normally launches this API with a generated token and a data folder of its own; this
-script does the same job by hand so the backend can be developed, scripted or run as a service:
+This runs the API by hand so it can be developed, scripted or run as a service:
 
     python run.py                                   # http://127.0.0.1:8000, data next to this file
     python run.py --port 8011                       # a second instance beside the first
     python run.py --data-dir ~/.local/share/vblis   # keep models/index outside the repo
-    python run.py --print-token                     # print the client token and exit
     python run.py --reload                          # restart on code changes (development)
-
-The client token comes from --token, then VBLIS_API_TOKEN, else <data dir>/api_token.txt is read
-or created (mode 0600) so restarts keep working without exporting anything.
 """
 import argparse
 import os
@@ -29,10 +24,8 @@ def _parse_args(argv):
     parser.add_argument("--host", help="bind address (default 127.0.0.1, or VBLIS_API_HOST)")
     parser.add_argument("--port", type=int, help="listen port (default 8000, or VBLIS_API_PORT)")
     parser.add_argument("--data-dir", help="models/index/cache folder (default: this api folder)")
-    parser.add_argument("--token", help="client token (default: VBLIS_API_TOKEN or <data dir>/api_token.txt)")
     parser.add_argument("--reload", action="store_true", help="restart the server when Python files change")
     parser.add_argument("--log-level", default="info", choices=["critical", "error", "warning", "info", "debug", "trace"])
-    parser.add_argument("--print-token", action="store_true", help="print the token that would be used, then exit")
     return parser.parse_args(argv)
 
 
@@ -44,8 +37,6 @@ def _apply_env(args) -> None:
         os.environ["VBLIS_API_HOST"] = args.host
     if args.port:
         os.environ["VBLIS_API_PORT"] = str(args.port)
-    if args.token:
-        os.environ["VBLIS_API_TOKEN"] = args.token
 
 
 def _port_is_free(host: str, port: int) -> bool:
@@ -67,12 +58,6 @@ def main(argv=None) -> int:
     if str(API_DIR) not in sys.path:
         sys.path.insert(0, str(API_DIR))
 
-    import security
-
-    if args.print_token:
-        print(security.resolve_api_token())
-        return 0
-
     # Check the port before importing the app: loading torch and the model takes seconds, and a
     # second instance should fail fast with a usable hint instead of after that wait.
     host = os.getenv("VBLIS_API_HOST", "127.0.0.1")
@@ -90,7 +75,6 @@ def main(argv=None) -> int:
 
     import main as api_main
     import paths
-    from bootstrap import API_TOKEN
 
     host, port = api_main.API_HOST, api_main.API_PORT
 
@@ -108,11 +92,6 @@ def main(argv=None) -> int:
 
     say(f"[VBLIS] API on http://{host}:{port}  (device: {device})")
     say(f"[VBLIS] Data folder: {paths.DATA_ROOT}")
-    say(f"[VBLIS] Client token: {API_TOKEN} (send as {security.API_TOKEN_HEADER})")
-    if args.token or os.getenv("VBLIS_API_TOKEN"):
-        say("[VBLIS] Token came from --token / VBLIS_API_TOKEN")
-    else:
-        say(f"[VBLIS] Token is also saved in {security.token_file_path()}")
     say("[VBLIS] Ctrl+C to stop")
 
     if args.reload:
