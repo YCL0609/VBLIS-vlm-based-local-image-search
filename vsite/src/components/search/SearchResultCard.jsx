@@ -4,7 +4,7 @@ import { CalendarDays, CheckCircle2, Sparkles, Copy, Video } from 'lucide-react'
 import { cn } from '../../utils/cn';
 import { formatTakenDate, formatVideoTimestamp } from '../../utils/formatters';
 import { getMediaPreviewUrl } from '../../utils/media';
-import { API_BASE } from '../../config';
+import { getApiBase } from '../../config';
 import { formatScoreLabel, hasScore } from '../../utils/scoreLabel';
 
 export const SearchResultCard = memo(function SearchResultCard({ res, idx, onSelect, uiTheme = 'modern' }) {
@@ -60,7 +60,7 @@ export const SearchResultCard = memo(function SearchResultCard({ res, idx, onSel
       )}
 
       <img
-        src={getMediaPreviewUrl(API_BASE, res)}
+        src={getMediaPreviewUrl(getApiBase(), res)}
         alt={res.media_type === 'video' ? t('common:videoFrameAt', { ts: formatVideoTimestamp(res.timestamp_seconds) }) : t('card.resultAlt')}
         className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-110"
         loading="lazy"

@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
 import { apiFetch } from '../utils/api';
 import { formatNumber } from '../utils/formatters';
 import i18n from '../i18n';
@@ -143,7 +143,7 @@ export const useSearchFilters = ({ setToast, activeTaskId = null, scanActive = f
     setOptionsLoading(true);
     setOptionsFailed(false);
     try {
-      const res = await apiFetch(`${API_BASE}/search/filter-options`);
+      const res = await apiFetch(`${getApiBase()}/search/filter-options`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (seq !== optionsSeq.current) return;
@@ -184,7 +184,7 @@ export const useSearchFilters = ({ setToast, activeTaskId = null, scanActive = f
   const requestScan = useCallback(async (autoFor = null) => {
     setIsStartingScan(true);
     try {
-      const res = await apiFetch(`${API_BASE}/index/media-info/scan`, { method: 'POST' });
+      const res = await apiFetch(`${getApiBase()}/index/media-info/scan`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data?.status === 'duplicate') {

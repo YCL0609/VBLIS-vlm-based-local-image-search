@@ -78,6 +78,12 @@ def main(argv=None) -> int:
 
     host, port = api_main.API_HOST, api_main.API_PORT
 
+    # 由外壳（quickjs）经 run.sh 拉起时，stdin 是外壳持有的管道：外壳退出后读到 EOF 就自杀，
+    # 否则杀外壳会留下一个占着端口的后端进程。
+    import parent_watch
+
+    parent_watch.start()
+
     device = "unknown"
     try:
         import devices

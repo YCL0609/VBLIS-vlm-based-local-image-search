@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
 import { apiFetch } from '../utils/api';
 import i18n from '../i18n';
 
@@ -15,7 +15,7 @@ export const useCacheStats = ({ isSettingsOpen, status, setToast }) => {
 
   const fetchCacheStats = useCallback(async () => {
     try {
-      const res = await apiFetch(`${API_BASE}/image/cache/stats`);
+      const res = await apiFetch(`${getApiBase()}/image/cache/stats`);
       if (res.ok) {
         const data = await res.json();
         setCacheStats(data);
@@ -28,7 +28,7 @@ export const useCacheStats = ({ isSettingsOpen, status, setToast }) => {
   const handleClearThumbnailCache = async (target = 'all') => {
     setIsClearingThumbnails(true);
     try {
-      const res = await apiFetch(`${API_BASE}/image/cache/clear?target=${target}`, {
+      const res = await apiFetch(`${getApiBase()}/image/cache/clear?target=${target}`, {
         method: 'POST'
       });
       const data = await res.json();
@@ -56,7 +56,7 @@ export const useCacheStats = ({ isSettingsOpen, status, setToast }) => {
     if (status.is_rebuilding_video_thumbnails || status.is_indexing || isTriggeringRebuildThumbnails) return;
     setIsTriggeringRebuildThumbnails(true);
     try {
-      const res = await apiFetch(`${API_BASE}/video/thumbnails/regenerate`, { method: 'POST' });
+      const res = await apiFetch(`${getApiBase()}/video/thumbnails/regenerate`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         setToast({ message: i18n.t('messages:cacheStats.rebuildStarted'), type: 'info' });

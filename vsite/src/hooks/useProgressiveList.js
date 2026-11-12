@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
 import { getMediaPreviewUrl } from '../utils/media';
 
 export const useProgressiveList = ({ items, visibleCount, setVisibleCount }) => {
@@ -13,7 +13,7 @@ export const useProgressiveList = ({ items, visibleCount, setVisibleCount }) => 
     const nextBatch = items.slice(visibleCount, visibleCount + 80);
     const prefetchTimer = setTimeout(() => {
       nextBatch.forEach(item => {
-        const url = getMediaPreviewUrl(API_BASE, item, 'thumbnail');
+        const url = getMediaPreviewUrl(getApiBase(), item, 'thumbnail');
         const img = new window.Image();
         img.src = url;
       });

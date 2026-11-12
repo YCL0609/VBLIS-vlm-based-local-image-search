@@ -3,7 +3,7 @@ import { Image as ImageIcon, AlertTriangle, Video } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 import { getMediaPreviewUrl } from '../../utils/media';
-import { API_BASE } from '../../config';
+import { getApiBase } from '../../config';
 
 export const FolderItemThumbnail = memo(function FolderItemThumbnail({ item, uiTheme = 'modern', onSelect }) {
   const { t } = useTranslation('folders');
@@ -65,7 +65,7 @@ export const FolderItemThumbnail = memo(function FolderItemThumbnail({ item, uiT
 
       {!error && (
         <img
-          src={getMediaPreviewUrl(API_BASE, item, 'thumbnail')}
+          src={getMediaPreviewUrl(getApiBase(), item, 'thumbnail')}
           alt={item.name}
           loading="lazy"
           decoding="async"

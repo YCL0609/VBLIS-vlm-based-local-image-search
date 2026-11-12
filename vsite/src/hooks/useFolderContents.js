@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
 import { keepIfEqual } from '../utils/jsonEqual';
 import { apiFetch } from '../utils/api';
 import i18n from '../i18n';
@@ -23,7 +23,7 @@ export const useFolderContents = ({ activeModel, lastTaskId, setToast, refreshFo
     }
 
     try {
-      const url = new URL(`${API_BASE}/index/folder/contents`);
+      const url = new URL(`${getApiBase()}/index/folder/contents`);
       url.searchParams.set('folder_path', folder.path);
       const res = await apiFetch(url.toString());
       const data = await res.json();

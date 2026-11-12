@@ -4,7 +4,7 @@ import { CalendarDays, FolderOpen, ChevronRight, Video } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { formatTakenDate } from '../../utils/formatters';
 import { getMediaPreviewUrl, prewarmVideoGroup } from '../../utils/media';
-import { API_BASE } from '../../config';
+import { getApiBase } from '../../config';
 import { formatScorePercent, hasScore } from '../../utils/scoreLabel';
 
 export const VideoResultFolder = memo(function VideoResultFolder({ group, idx, onSelect, uiTheme = 'modern' }) {
@@ -28,15 +28,15 @@ export const VideoResultFolder = memo(function VideoResultFolder({ group, idx, o
         animationDelay: `${idx * 50}ms`,
         animationDuration: '400ms'
       }}
-      onMouseEnter={() => prewarmVideoGroup(API_BASE, group)}
+      onMouseEnter={() => prewarmVideoGroup(getApiBase(), group)}
       onClick={() => {
-        prewarmVideoGroup(API_BASE, group);
+        prewarmVideoGroup(getApiBase(), group);
         onSelect(group);
       }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
-          prewarmVideoGroup(API_BASE, group);
+          prewarmVideoGroup(getApiBase(), group);
           onSelect(group);
         }
       }}
@@ -46,7 +46,7 @@ export const VideoResultFolder = memo(function VideoResultFolder({ group, idx, o
         !isModern && "border-b border-white"
       )}>
         <img
-          src={getMediaPreviewUrl(API_BASE, group.bestFrame)}
+          src={getMediaPreviewUrl(getApiBase(), group.bestFrame)}
           alt={t('videoFolder.bestFrameAlt', { name: group.name })}
           className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
           loading="lazy"

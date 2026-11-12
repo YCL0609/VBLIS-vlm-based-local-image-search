@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
 import { keepIfEqual } from '../utils/jsonEqual';
 import { getAllSelectablePaths, toggleFolderSelection as toggleFolderSelectionPure } from '../utils/folderSelection';
 import { apiFetch } from '../utils/api';
@@ -15,7 +15,7 @@ export const useIndexedFolders = ({ activeModel, lastTaskId, isExpanded, setToas
     if (!activeModel) return;
     if (!silent) setIsFetchingFolders(true);
     try {
-      const res = await apiFetch(`${API_BASE}/index/folders`);
+      const res = await apiFetch(`${getApiBase()}/index/folders`);
       const data = await res.json();
       setIndexedFolders(keepIfEqual(data.folders || []));
     } catch (err) {
@@ -27,7 +27,7 @@ export const useIndexedFolders = ({ activeModel, lastTaskId, isExpanded, setToas
 
   const handleReindexFolder = useCallback(async (folder_path) => {
     try {
-      const res = await apiFetch(`${API_BASE}/index/folder/reindex`, {
+      const res = await apiFetch(`${getApiBase()}/index/folder/reindex`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ folder_path })
@@ -56,7 +56,7 @@ export const useIndexedFolders = ({ activeModel, lastTaskId, isExpanded, setToas
 
   const handleDeleteFolderIndex = async (folder_path) => {
     try {
-      const res = await apiFetch(`${API_BASE}/index/folder/delete`, {
+      const res = await apiFetch(`${getApiBase()}/index/folder/delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ folder_path })
@@ -81,7 +81,7 @@ export const useIndexedFolders = ({ activeModel, lastTaskId, isExpanded, setToas
     if (selectedFolders.length === 0) return;
     setIsBatchProcessing(true);
     try {
-      const res = await apiFetch(`${API_BASE}/index/folders/batch-delete`, {
+      const res = await apiFetch(`${getApiBase()}/index/folders/batch-delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ folder_paths: selectedFolders })
@@ -105,7 +105,7 @@ export const useIndexedFolders = ({ activeModel, lastTaskId, isExpanded, setToas
     if (selectedFolders.length === 0) return;
     setIsBatchProcessing(true);
     try {
-      const res = await apiFetch(`${API_BASE}/index/folders/batch-reindex`, {
+      const res = await apiFetch(`${getApiBase()}/index/folders/batch-reindex`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ folder_paths: selectedFolders })

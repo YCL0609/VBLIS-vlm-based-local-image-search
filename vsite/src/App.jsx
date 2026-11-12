@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { API_BASE } from './config';
+import { getApiBase } from './config';
 import { cn } from './utils/cn';
 import { useTaskQueue } from './hooks/useTaskQueue';
 import { useThemePreferences } from './hooks/useThemePreferences';
@@ -31,6 +31,7 @@ import { MediaLightbox } from './components/media/MediaLightbox';
 import { SearchResultsGrid } from './components/search/SearchResultsGrid';
 import { TerminalResultsModal } from './components/search/TerminalResultsModal';
 import { FolderContentsModal } from './components/folders/FolderContentsModal';
+import { FolderPickerModal } from './components/folders/FolderPickerModal';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { apiFetch } from './utils/api';
 
@@ -42,10 +43,12 @@ function App() {
   const [selectedVideoPath, setSelectedVideoPath] = useState(null);
   const [isFoldersExpanded, setIsFoldersExpanded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Fallback folder chooser for the web UI, where there is no Electron dialog to ask.
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [showConfirmClear, setShowConfirmClear] = useState(false);
   const { theme, setTheme, uiTheme, setUiTheme } = useThemePreferences();
   const { toast, setToast } = useToast();
-  const queue = useTaskQueue(API_BASE, setToast);
+  const queue = useTaskQueue(getApiBase(), setToast);
   // Stable so the memoized results modal does not re-render on unrelated App commits.
   const setSelectedVideoGroup = useCallback((group) => {
     setSelectedVideoPath(group ? group.path : null);
@@ -220,10 +223,20 @@ function App() {
   const showNoMatches = results.length === 0 && !isSearching && hasSearched && Boolean(models.active_model) && !isSwitchingModel && (query.length > 0 || Boolean(imageSearchContext) || isBrowsing);
 
   const handleOpenFolder = async () => {
-    if (!window.electronAPI) return;
-    const paths = await window.electronAPI.openDirectory();
-    if (paths && paths.length > 0) {
-      await queue.enqueueFolderIndexing(paths);
+    if (window.electronAPI?.openDirectory) {
+      const paths = await window.electronAPI.openDirectory();
+      if (paths && paths.length > 0) {
+        await queue.enqueueFolderIndexing(paths);
+      }
+      return;
+    }
+    setShowFolderPicker(true);
+  };
+
+  const handlePickFolder = async (path) => {
+    setShowFolderPicker(false);
+    if (path) {
+      await queue.enqueueFolderIndexing([path]);
     }
   };
 
@@ -232,7 +245,7 @@ function App() {
 
     setIsClearing(true);
     try {
-      await apiFetch(`${API_BASE}/index/clear`, {
+      await apiFetch(`${getApiBase()}/index/clear`, {
         method: 'POST'
       });
       // Reset UI cleanly
@@ -307,6 +320,13 @@ function App() {
         isClearingThumbnails={isClearingThumbnails}
         handleRebuildVideoThumbnails={handleRebuildVideoThumbnails}
         isTriggeringRebuildThumbnails={isTriggeringRebuildThumbnails}
+      />
+
+      <FolderPickerModal
+        isOpen={showFolderPicker}
+        onClose={() => setShowFolderPicker(false)}
+        onSelect={handlePickFolder}
+        uiTheme={uiTheme}
       />
 
       {/* Folder Contents Modal */}

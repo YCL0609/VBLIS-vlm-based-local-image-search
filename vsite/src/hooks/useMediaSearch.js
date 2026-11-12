@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
 import { annotateDuplicates, groupVideoResults, getImageResults, countSearchResults } from '../utils/searchResults';
 import { useProgressiveList } from './useProgressiveList';
 import { apiFetch } from '../utils/api';
@@ -29,7 +29,7 @@ const loadSearchTuning = () => {
   };
 };
 
-const postJson = (path, body) => apiFetch(`${API_BASE}${path}`, {
+const postJson = (path, body) => apiFetch(`${getApiBase()}${path}`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body)
@@ -343,7 +343,7 @@ export const useMediaSearch = ({ setToast, onSearchStart, onClose, filters = nul
       if (filtersRef.current) formData.append('filters', JSON.stringify(filtersRef.current));
       // We can also append top_k and min_score if the API takes them as form fields or query params
       // Our API takes them as query params in the new endpoint if we defined it that way
-      const url = new URL(`${API_BASE}/search/image`);
+      const url = new URL(`${getApiBase()}/search/image`);
       const topK = parseInt(maxResults) === 0 ? 20000 : parseInt(maxResults);
       const imageMinScore = parseFloat(minSimilarity);
       url.searchParams.append('top_k', topK);
@@ -548,7 +548,7 @@ export const useMediaSearch = ({ setToast, onSearchStart, onClose, filters = nul
 
     let failure = null;
     try {
-      const res = await apiFetch(`${API_BASE}/search/video`, {
+      const res = await apiFetch(`${getApiBase()}/search/video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)

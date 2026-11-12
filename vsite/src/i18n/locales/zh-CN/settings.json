@@ -25,6 +25,15 @@
     "title": "语言",
     "system": "跟随系统"
   },
+  "connection": {
+    "title": "后端地址",
+    "save": "保存",
+    "restoreDefault": "恢复默认",
+    "hint": "保存后会刷新页面，应用随即改用这个地址。",
+    "invalid": "请输入类似 127.0.0.1:8000 的地址。",
+    "default": "默认：{{base}}",
+    "saved": "已保存，正在刷新……"
+  },
   "asciiLogo": {
     "label": "VBLIS 旋转 3D ASCII 标志"
   },
@@ -87,14 +96,13 @@
   },
   "performance": {
     "title": "硬件加速与批处理",
-    "gpuSupport": "NVIDIA GPU 支持",
+    "gpuSupport": "GPU 加速",
     "gpuUsing": "正在使用 {{name}}",
-    "gpuUsingCuda": "正在使用 CUDA",
-    "gpuDirects": "将任务交给 GPU 处理",
-    "gpuNotDetected": "未检测到 NVIDIA GPU",
-    "gpuDisable": "停用 NVIDIA GPU 支持",
-    "gpuEnable": "启用 NVIDIA GPU 支持",
-    "cudaRequired": "GPU 加速需要支持 CUDA 的 GPU。",
+    "gpuAvailable": "检测到 {{names}}，可启用 GPU 加速",
+    "gpuNotDetected": "未检测到可用的 GPU 加速后端，当前使用 CPU",
+    "gpuDisable": "停用 GPU 加速",
+    "gpuEnable": "启用 GPU 加速",
+    "cudaRequired": "没有可用的 GPU 加速后端（CUDA / MPS），推理在 CPU 上进行。",
     "batchSize": {
       "title": "批大小",
       "auto": "自动",
@@ -106,8 +114,8 @@
       "auto": "自动（{{precision}}）",
       "fp16": "FP16（半精度）",
       "fp32": "FP32（全精度）",
-      "fp16Supported": "支持 FP16 Tensor Core",
-      "fallback": "旧款 GPU 自动回退到 FP32"
+      "fp16Supported": "支持 FP16 计算",
+      "fallback": "不支持 FP16，自动使用 FP32"
     },
     "oom": {
       "title": "已触发 OOM / 内存安全回退",

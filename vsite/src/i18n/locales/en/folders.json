@@ -100,5 +100,20 @@
     "resyncSub": "Re-sync only this subfolder",
     "resyncSubMissing": "Re-sync subfolder (e.g. reconnect USB drive)",
     "deleteSub": "Delete only this subfolder from index"
+  },
+  "picker": {
+    "title": "Add a folder",
+    "subtitle": "Browse folders on this computer",
+    "home": "Home",
+    "up": "Up",
+    "loading": "Loading…",
+    "empty": "No subfolders here",
+    "truncated": "Too many subfolders; open one to see the rest.",
+    "hint": "Pick the folder to index, then confirm.",
+    "selectThis": "Index this folder",
+    "cancel": "Cancel",
+    "loadFailed": "Could not list this folder.",
+    "showHidden": "Show hidden",
+    "hideHidden": "Hide hidden"
   }
 }

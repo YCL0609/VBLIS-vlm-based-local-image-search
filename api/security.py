@@ -1,9 +1,10 @@
 """Local API hardening: Host and CORS restrictions plus an upload size cap.
 
 The API listens on localhost only. TrustedHost rejects requests whose Host header is not a local
-name, CORS names the packaged renderer (app://vblis) and the Vite dev server as the only origins
-that may read responses, and UploadLimit turns away oversized image uploads before they are read.
-File-system access is guarded per router (see path_keys and is_within below)."""
+name, CORS names the local web UI (the desktop shell's http://127.0.0.1:11120, a Vite dev server on
+any port) as the only origins that may read responses, and UploadLimit turns away oversized image
+uploads before they are read. File-system access is guarded per router (see path_keys and is_within
+below)."""
 import path_keys
 from starlette.datastructures import Headers
 from starlette.middleware.cors import CORSMiddleware
@@ -11,8 +12,9 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
 
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
-# app://vblis is the packaged renderer (electron/main.js); any localhost port is the Vite dev server.
-CORS_ORIGIN_REGEX = r"^(app://vblis|http://(localhost|127\.0\.0\.1)(:\d+)?)$"
+# The UI is served by the quickjs shell on http://127.0.0.1:11120 or by Vite on any localhost port,
+# so every localhost origin is allowed (the Host check above already keeps the API local).
+CORS_ORIGIN_REGEX = r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 # Multipart framing added on top of the file itself
 UPLOAD_OVERHEAD_BYTES = 1024 * 1024

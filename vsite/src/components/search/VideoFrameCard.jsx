@@ -4,7 +4,7 @@ import { CalendarDays, Video } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { formatTakenDate, formatVideoTimestamp } from '../../utils/formatters';
 import { getMediaPreviewUrl } from '../../utils/media';
-import { API_BASE } from '../../config';
+import { getApiBase } from '../../config';
 import { formatScoreLabelUpper, hasScore } from '../../utils/scoreLabel';
 
 export const VideoFrameCard = memo(function VideoFrameCard({ frame, index, onSelect, uiTheme = 'modern' }) {
@@ -52,7 +52,7 @@ export const VideoFrameCard = memo(function VideoFrameCard({ frame, index, onSel
 
         {!error && (
           <img
-            src={getMediaPreviewUrl(API_BASE, frame, 'thumbnail')}
+            src={getMediaPreviewUrl(getApiBase(), frame, 'thumbnail')}
             alt={t('common:videoFrameAt', { ts: formatVideoTimestamp(frame.timestamp_seconds) })}
             className={cn(
               "h-full w-full object-cover transition-all duration-500 group-hover:scale-105",

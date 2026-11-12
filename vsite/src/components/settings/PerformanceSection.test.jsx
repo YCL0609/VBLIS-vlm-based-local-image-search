@@ -5,7 +5,10 @@ import { PerformanceSection } from './PerformanceSection';
 const makeGpu = (overrides = {}) => ({
   use_gpu: false,
   cuda_available: true,
+  mps_available: false,
+  accelerators: ['cuda'],
   device: 'cuda',
+  device_label: 'CUDA (NVIDIA)',
   batch_size: 0,
   effective_batch_size: 16,
   precision_mode: 'auto',
@@ -29,30 +32,43 @@ describe('PerformanceSection', () => {
   afterEach(cleanup);
 
   describe('GPU toggle', () => {
-    it.each(['modern', 'terminal'])('is disabled without CUDA and shows the warning (%s)', (uiTheme) => {
-      render(<PerformanceSection {...makeProps({ uiTheme, gpuSettings: makeGpu({ cuda_available: false }) })} />);
-      expect(screen.getByText('No NVIDIA GPU detected')).toBeTruthy();
-      expect(screen.getByText(/CUDA-capable GPU is required for GPU acceleration\./)).toBeTruthy();
-      expect(screen.getByLabelText('Enable NVIDIA GPU support').disabled).toBe(true);
+    it.each(['modern', 'terminal'])('is disabled without any accelerator and shows the warning (%s)', (uiTheme) => {
+      render(<PerformanceSection {...makeProps({ uiTheme, gpuSettings: makeGpu({ cuda_available: false, accelerators: [], device: 'cpu', device_label: 'CPU' }) })} />);
+      expect(screen.getByText('No GPU accelerator detected — running on CPU')).toBeTruthy();
+      expect(screen.getByText(/No GPU accelerator \(CUDA or MPS\) is available/)).toBeTruthy();
+      expect(screen.getByLabelText('Enable GPU acceleration').disabled).toBe(true);
     });
 
     it.each(['modern', 'terminal'])('calls handleToggleGpu (%s)', (uiTheme) => {
       const props = makeProps({ uiTheme });
       render(<PerformanceSection {...props} />);
-      expect(screen.queryByText(/CUDA-capable GPU is required/)).toBeNull();
-      fireEvent.click(screen.getByLabelText('Enable NVIDIA GPU support'));
+      expect(screen.queryByText(/No GPU accelerator \(CUDA or MPS\) is available/)).toBeNull();
+      expect(screen.getByText('CUDA detected — enable GPU acceleration')).toBeTruthy();
+      fireEvent.click(screen.getByLabelText('Enable GPU acceleration'));
       expect(props.handleToggleGpu).toHaveBeenCalledTimes(1);
     });
 
-    it('describes the GPU in use', () => {
-      render(<PerformanceSection {...makeProps({ gpuSettings: makeGpu({ use_gpu: true, gpu_name: 'RTX 4090' }) })} />);
+    it('accepts an MPS-only machine', () => {
+      render(<PerformanceSection {...makeProps({ gpuSettings: makeGpu({ cuda_available: false, mps_available: true, accelerators: ['mps'], device: 'cpu', device_label: 'CPU' }) })} />);
+      const toggle = screen.getByLabelText('Enable GPU acceleration');
+      expect(toggle.disabled).toBe(false);
+      expect(screen.getByText('MPS detected — enable GPU acceleration')).toBeTruthy();
+    });
+
+    it('lists every available accelerator', () => {
+      render(<PerformanceSection {...makeProps({ gpuSettings: makeGpu({ mps_available: true, accelerators: ['cuda', 'mps'] }) })} />);
+      expect(screen.getByText('CUDA / MPS detected — enable GPU acceleration')).toBeTruthy();
+    });
+
+    it('describes the device in use', () => {
+      render(<PerformanceSection {...makeProps({ gpuSettings: makeGpu({ use_gpu: true, device_label: 'RTX 4090' }) })} />);
       expect(screen.getByText('Using RTX 4090')).toBeTruthy();
-      expect(screen.getByLabelText('Disable NVIDIA GPU support')).toBeTruthy();
+      expect(screen.getByLabelText('Disable GPU acceleration')).toBeTruthy();
     });
 
     it('is disabled while switching', () => {
       render(<PerformanceSection {...makeProps({ isSwitchingGpu: true })} />);
-      expect(screen.getByLabelText('Enable NVIDIA GPU support').disabled).toBe(true);
+      expect(screen.getByLabelText('Enable GPU acceleration').disabled).toBe(true);
     });
   });
 
@@ -100,13 +116,13 @@ describe('PerformanceSection', () => {
     it('describes auto mode and the FP16 support hint', () => {
       render(<PerformanceSection {...makeProps({ gpuSettings: makeGpu({ effective_batch_size: 32 }) })} />);
       expect(screen.getByText('Auto mode active (Effective batch size: 32)')).toBeTruthy();
-      expect(screen.getByText('FP16 Tensor Cores supported')).toBeTruthy();
+      expect(screen.getByText('FP16 compute supported')).toBeTruthy();
     });
 
     it('shows the manual batch hint and the legacy GPU hint', () => {
       render(<PerformanceSection {...makeProps({ gpuSettings: makeGpu({ batch_size: 8, fp16_supported: false }) })} />);
       expect(screen.getByText('Higher batch size increases GPU utilization.')).toBeTruthy();
-      expect(screen.getByText('Auto fallback to FP32 for legacy GPUs')).toBeTruthy();
+      expect(screen.getByText('FP16 unavailable — falling back to FP32')).toBeTruthy();
     });
   });
 

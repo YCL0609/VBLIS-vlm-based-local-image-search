@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { API_BASE } from '../config';
+import { getApiBase } from '../config';
 import { keepIfEqual } from '../utils/jsonEqual';
 import { apiFetch } from '../utils/api';
 import { isModelDependentTask } from '../utils/taskTypes';
@@ -24,7 +24,10 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
   const [gpuSettings, setGpuSettings] = useState({ 
     use_gpu: false, 
     cuda_available: false, 
+    mps_available: false,
+    accelerators: [],
     device: 'cpu', 
+    device_label: 'CPU',
     batch_size: 0, 
     effective_batch_size: 16,
     precision_mode: 'auto', 
@@ -42,7 +45,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
 
     const fetchModels = async () => {
       try {
-        const res = await apiFetch(`${API_BASE}/models`);
+        const res = await apiFetch(`${getApiBase()}/models`);
         const data = await res.json();
         if (mounted) {
           setModels(keepIfEqual(data));
@@ -56,7 +59,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
 
     const fetchGpuSettings = async () => {
       try {
-        const res = await apiFetch(`${API_BASE}/settings/gpu`);
+        const res = await apiFetch(`${getApiBase()}/settings/gpu`);
         if (!res.ok) throw new Error("Failed to fetch GPU settings");
         const data = await res.json();
         if (mounted) setGpuSettings(keepIfEqual(data));
@@ -85,7 +88,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
     if (!status.is_downloading && backendReady) {
       const fetchModels = async () => {
         try {
-          const res = await apiFetch(`${API_BASE}/models`);
+          const res = await apiFetch(`${getApiBase()}/models`);
           const data = await res.json();
           if (mounted) setModels(keepIfEqual(data));
         } catch { /* backend not reachable yet; ignore */ }
@@ -100,7 +103,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
     // 1. Success case: download finished with no error
     if (prevIsDownloading.current === true && status.is_downloading === false && !status.download_error && status.download_total_bytes > 0) {
       const modelName = pendingModel.split('/').pop();
-      apiFetch(`${API_BASE}/models`)
+      apiFetch(`${getApiBase()}/models`)
         .then((res) => res.json())
         .then((data) => {
           setModels(data);
@@ -141,7 +144,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
     };
 
     try {
-      const res = await apiFetch(`${API_BASE}/settings/gpu`, {
+      const res = await apiFetch(`${getApiBase()}/settings/gpu`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -156,7 +159,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
       setGpuSettings(data);
       setToast({ message: i18n.t('messages:modelManager.performanceUpdated'), type: 'success' });
       
-      const resModels = await apiFetch(`${API_BASE}/models`);
+      const resModels = await apiFetch(`${getApiBase()}/models`);
       const dataModels = await resModels.json();
       setModels(dataModels);
     } catch (err) {
@@ -204,7 +207,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
     onSwitchStart?.();
 
     try {
-      const res = await apiFetch(`${API_BASE}/models/switch`, {
+      const res = await apiFetch(`${getApiBase()}/models/switch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model_name, clear_queue: clearQueue })
@@ -216,13 +219,13 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
         setModelLoadError({ model: model_name, message: errorMessage });
         
         // Refresh models list to ensure status is accurate
-        const resModels = await apiFetch(`${API_BASE}/models`);
+        const resModels = await apiFetch(`${getApiBase()}/models`);
         const data = await resModels.json();
         setModels(data);
         return;
       }
       // Refresh models to get correct active state and status
-      const resModels = await apiFetch(`${API_BASE}/models`);
+      const resModels = await apiFetch(`${getApiBase()}/models`);
       const data = await resModels.json();
       setModels(data);
       setPendingModel(model_name);
@@ -241,11 +244,11 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
   const handleUnloadModel = async () => {
     setIsUnloadingModel(true);
     try {
-      const res = await apiFetch(`${API_BASE}/models/unload`, { method: 'POST' });
+      const res = await apiFetch(`${getApiBase()}/models/unload`, { method: 'POST' });
       if (res.ok) {
         setToast({ message: i18n.t('messages:modelManager.unloaded'), type: 'success' });
         // Refresh models list
-        const resModels = await apiFetch(`${API_BASE}/models`);
+        const resModels = await apiFetch(`${getApiBase()}/models`);
         const data = await resModels.json();
         setModels(data);
       } else {
@@ -262,7 +265,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
 
   const handleCancelDownload = async () => {
     try {
-      await apiFetch(`${API_BASE}/models/download/cancel`, { method: 'POST' });
+      await apiFetch(`${getApiBase()}/models/download/cancel`, { method: 'POST' });
     } catch (err) {
       console.error(err);
     }
@@ -273,7 +276,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
     setModelLoadError(null);
     setStatus(prev => ({ ...prev, download_error: null, is_downloading: true }));
     try {
-      await apiFetch(`${API_BASE}/models/download`, {
+      await apiFetch(`${getApiBase()}/models/download`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model_name })
@@ -286,7 +289,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
   const handleDeleteModel = async (model_name) => {
     setIsDeletingModel(true);
     try {
-      const res = await apiFetch(`${API_BASE}/models/delete`, {
+      const res = await apiFetch(`${getApiBase()}/models/delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -302,7 +305,7 @@ export const useModelManager = ({ status, setStatus, queue, setToast, onSwitchSt
           type: 'success'
         });
         // Refresh models list
-        const resModels = await apiFetch(`${API_BASE}/models`);
+        const resModels = await apiFetch(`${getApiBase()}/models`);
         const data = await resModels.json();
         setModels(data);
       } else {

@@ -25,6 +25,15 @@
     "title": "Language",
     "system": "Follow system"
   },
+  "connection": {
+    "title": "Backend address",
+    "save": "Save",
+    "restoreDefault": "Restore default",
+    "hint": "Saving reloads the page so the app reconnects to this address.",
+    "invalid": "Enter an address like 127.0.0.1:8000.",
+    "default": "Default: {{base}}",
+    "saved": "Saved, reloading…"
+  },
   "asciiLogo": {
     "label": "VBLIS rotating 3D ASCII logo"
   },
@@ -89,14 +98,13 @@
   },
   "performance": {
     "title": "Hardware Acceleration & Batching",
-    "gpuSupport": "NVIDIA GPU Support",
+    "gpuSupport": "GPU Acceleration",
     "gpuUsing": "Using {{name}}",
-    "gpuUsingCuda": "Currently using CUDA",
-    "gpuDirects": "Directs tasks to GPU",
-    "gpuNotDetected": "No NVIDIA GPU detected",
-    "gpuDisable": "Disable NVIDIA GPU support",
-    "gpuEnable": "Enable NVIDIA GPU support",
-    "cudaRequired": "CUDA-capable GPU is required for GPU acceleration.",
+    "gpuAvailable": "{{names}} detected — enable GPU acceleration",
+    "gpuNotDetected": "No GPU accelerator detected — running on CPU",
+    "gpuDisable": "Disable GPU acceleration",
+    "gpuEnable": "Enable GPU acceleration",
+    "cudaRequired": "No GPU accelerator (CUDA or MPS) is available; inference runs on the CPU.",
     "batchSize": {
       "title": "Batch Size",
       "auto": "Auto",
@@ -108,8 +116,8 @@
       "auto": "Auto ({{precision}})",
       "fp16": "FP16 (Half Precision)",
       "fp32": "FP32 (Full Precision)",
-      "fp16Supported": "FP16 Tensor Cores supported",
-      "fallback": "Auto fallback to FP32 for legacy GPUs"
+      "fp16Supported": "FP16 compute supported",
+      "fallback": "FP16 unavailable — falling back to FP32"
     },
     "oom": {
       "title": "OOM / Memory Safety Fallback Triggered",

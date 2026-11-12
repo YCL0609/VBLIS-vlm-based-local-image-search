@@ -1,6 +1,6 @@
 import { FolderOpen, X, Sparkles, Copy, ClipboardCopy, Video } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { API_BASE } from '../../config';
+import { getApiBase } from '../../config';
 import { useBackdropDismiss } from '../../hooks/useBackdropDismiss';
 import { cn } from '../../utils/cn';
 import { copyText, openInExplorer } from '../../utils/electron';
@@ -66,7 +66,7 @@ export const MediaLightbox = ({ selectedImage, setSelectedImage, setToast, uiThe
       </div>
 
       <img
-        src={getMediaPreviewUrl(API_BASE, selectedImage, 'full')}
+        src={getMediaPreviewUrl(getApiBase(), selectedImage, 'full')}
         alt={selectedImage.media_type === 'video' ? t('common:videoFrameAt', { ts: formatVideoTimestamp(selectedImage.timestamp_seconds) }) : t('lightbox.fullSizeAlt')}
         className={cn(
           "max-w-full object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-300",

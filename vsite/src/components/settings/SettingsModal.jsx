@@ -2,6 +2,7 @@ import { Settings, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ThemeStyleSection } from './ThemeStyleSection';
 import { LanguageSection } from './LanguageSection';
+import { ConnectionSection } from './ConnectionSection';
 import { PerformanceSection } from './PerformanceSection';
 import { ModelManagementSection } from './ModelManagementSection';
 import { SearchTuningSection } from './SearchTuningSection';
@@ -37,6 +38,8 @@ export const SettingsModal = ({ showSettings, setShowSettings, theme, setTheme, 
             />
 
             <LanguageSection />
+
+            <ConnectionSection />
 
             <PerformanceSection
               gpuSettings={gpuSettings}

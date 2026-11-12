@@ -6,13 +6,25 @@ import { cn } from '../../utils/cn';
 export const PerformanceSection = ({ gpuSettings, status, uiTheme, isSwitchingGpu, handleToggleGpu, handleUpdatePerformanceSettings }) => {
   const { t } = useTranslation('settings');
   const autoPrecisionLabel = t('performance.precision.auto', { precision: gpuSettings.active_precision ? gpuSettings.active_precision.toUpperCase() : 'FP32' });
+
+  // 后端 devices.available() 返回本机可用的加速器（cuda / mps）；旧后端只给 cuda_available。
+  const accelerators = gpuSettings.accelerators?.length
+    ? gpuSettings.accelerators
+    : (gpuSettings.cuda_available ? ['cuda'] : []);
+  const canAccelerate = accelerators.length > 0;
+  const usingAccelerator = Boolean(gpuSettings.use_gpu) && canAccelerate;
+  const acceleratorNames = accelerators
+    .map((name) => ({ cuda: 'CUDA', mps: 'MPS' }[name] || String(name).toUpperCase()))
+    .join(' / ');
+  const deviceLabel = gpuSettings.device_label || gpuSettings.gpu_name || 'GPU';
+
   return (
     <div className="pt-2">
       <label className="block text-sm font-semibold text-neutral-500 dark:text-neutral-400 mb-2">{t('performance.title')}</label>
       <div 
         className={cn(
           "flex items-center justify-between p-3 border rounded-xl transition-all duration-200 mb-3",
-          gpuSettings.use_gpu && gpuSettings.cuda_available
+          usingAccelerator
             ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30"
             : "bg-gray-50 dark:bg-neutral-800/30 border-gray-100 dark:border-neutral-800"
         )}
@@ -20,10 +32,10 @@ export const PerformanceSection = ({ gpuSettings, status, uiTheme, isSwitchingGp
         <div className="flex flex-col">
           <span className="text-sm font-bold text-neutral-700 dark:text-neutral-200">{t('performance.gpuSupport')}</span>
           <span className="text-[10px] text-neutral-400 dark:text-neutral-500 font-medium">
-            {gpuSettings.cuda_available 
-              ? (gpuSettings.use_gpu 
-                  ? (gpuSettings.gpu_name ? t('performance.gpuUsing', { name: gpuSettings.gpu_name }) : t('performance.gpuUsingCuda')) 
-                  : t('performance.gpuDirects')) 
+            {canAccelerate
+              ? (gpuSettings.use_gpu
+                  ? t('performance.gpuUsing', { name: deviceLabel })
+                  : t('performance.gpuAvailable', { names: acceleratorNames }))
               : t('performance.gpuNotDetected')}
           </span>
         </div>
@@ -31,7 +43,7 @@ export const PerformanceSection = ({ gpuSettings, status, uiTheme, isSwitchingGp
           <button
             type="button"
             onClick={handleToggleGpu}
-            disabled={!gpuSettings.cuda_available || isSwitchingGpu}
+            disabled={!canAccelerate || isSwitchingGpu}
             className={cn(
               "relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none disabled:opacity-40 cursor-pointer flex-shrink-0",
               gpuSettings.use_gpu ? "bg-indigo-600" : "bg-gray-200 dark:bg-neutral-700"
@@ -54,7 +66,7 @@ export const PerformanceSection = ({ gpuSettings, status, uiTheme, isSwitchingGp
           <button
             type="button"
             onClick={handleToggleGpu}
-            disabled={!gpuSettings.cuda_available || isSwitchingGpu}
+            disabled={!canAccelerate || isSwitchingGpu}
             className="relative inline-flex h-7 w-7 items-center justify-center bg-black border border-white focus:outline-none disabled:cursor-not-allowed flex-shrink-0"
             aria-label={gpuSettings.use_gpu ? t('performance.gpuDisable') : t('performance.gpuEnable')}
           >
@@ -65,7 +77,7 @@ export const PerformanceSection = ({ gpuSettings, status, uiTheme, isSwitchingGp
         )}
       </div>
 
-      {!gpuSettings.cuda_available && (
+      {!canAccelerate && (
         <p className="text-[10px] text-amber-500 font-medium mt-1 mb-3 px-1 flex items-center gap-1">
           <AlertTriangle className="w-3 h-3" /> {t('performance.cudaRequired')}
         </p>
