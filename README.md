@@ -41,14 +41,15 @@ This branch replaces the Electron host with a small QuickJS shell: a static musl
 built frontend on `127.0.0.1:11120` and starts the Python backend on `127.0.0.1:8000`. The frontend lives
 in `vsite/` and is packaged into the shell.
 
-Prerequisites: Node.js 18+, Python 3.11–3.13, `cmake`, `gcc` and `musl-gcc`.
+Prerequisites: Node.js 20.19+ (22 recommended), Python 3.11–3.13, `cmake`, `gcc` and `musl-gcc`.
 
 ```bash
 ./build_linux.sh                 # frontend + shell + backend sources + smoke test
 ./build_linux.sh --binary        # also freeze the backend with PyInstaller
 ```
 
-The result is `dist/vblis-linux-x86_64/`; start it with `./run.sh` inside that folder. On first run the
+The result is `dist/vblis-linux-x86_64/`; start it with `./run.sh` inside that folder. The release
+workflow builds the same bundle and publishes it with the web interface as a separate zip. On first run the
 launcher creates a virtualenv under `~/.local/share/vblis` and installs `api/requirements.txt`
 (PyTorch cu130 by default; NVIDIA driver 580+ is needed for GPU, CPU otherwise). Server mode still works
 as described in [SERVER.md](SERVER.md).
@@ -72,11 +73,10 @@ The `naflex` models look at each image in its own aspect ratio; the others resiz
 
 ## How to Use
 
-1. **Download & Install**: From the [Releases](https://github.com/opoeci6/VBLIS-vlm-based-local-image-search/releases) page, download the latest `VBLIS-Setup-<version>.exe` and run it.
-Or use the portable version `VBLIS-<version>-win.7z`: extract it with [7-Zip](https://www.7-zip.org/) (or the extraction built into Windows 11) into a folder you can write to, not Program Files, and launch `VBLIS.exe`.
+1. **Download & Run**: From the [Releases](https://github.com/opoeci6/VBLIS-vlm-based-local-image-search/releases) page, download the latest `VBLIS-linux-x86_64-<version>.tar.gz`, extract it into a folder you can write to, and start `./run.sh` (or the `vblis` binary). The first launch creates a Python environment in `~/.local/share/vblis/venv` and downloads PyTorch and the backend dependencies; it needs Python 3.11–3.13, network access and a few GB of disk. Later launches reuse it.
 For a server on Linux or in Docker, follow [SERVER.md](SERVER.md) instead. The release's `VBLIS-web-<version>.zip` holds the web interface, so the server needs no Node.js.
 > [!NOTE]
-> The installer isn't code-signed, so Windows SmartScreen may show "Windows protected your PC". Click **More info**, then **Run anyway**. To check a download, compare the output of `Get-FileHash <file>` in PowerShell with its line in the release's `SHA256SUMS.txt`.
+> The Linux bundle isn't code-signed. To check a download, run `sha256sum -c SHA256SUMS.txt` in the folder with the downloaded files.
 2. **Select a Model**: On first launch, choose a model and download it (a SigLIP 2 model is highly recommended; see [Models](#models)).
 3. **Add Folders**: Click **Add Folder(s)** or drag and drop folders into the app to start indexing your library. VBLIS indexes all the subfolders of each folder.
 4. **Search**: Once indexing is complete, type a query in the search bar or drag an image into the search area to find what you're looking for.

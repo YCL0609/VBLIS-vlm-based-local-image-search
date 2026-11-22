@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'Release version tag, e.g. v0.3.0'
+        description: 'Release version tag, e.g. v0.7.0'
         required: true
         type: string
       publish_release:
@@ -31,7 +31,7 @@ permissions:
 jobs:
   # Rejects a bad tag or an existing release within a minute, before the long build starts
   prepare:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     permissions:
       # write, not read: draft releases are only listed to tokens with push access
       contents: write
@@ -46,16 +46,14 @@ jobs:
           VERSION_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.version_tag || github.ref_name }}
           PUBLISH: ${{ github.event_name == 'push' || inputs.publish_release }}
         run: |
-          $ErrorActionPreference = "Stop"
-          $tag = $env:VERSION_TAG
-          # -cnotmatch: -match ignores case. [0-9]: .NET's \d also matches non-ASCII digits
-          if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$') {
-            Write-Output "::error::Version tag '$tag' must look like v1.2.3 or v1.2.3-rc.1"
+          set -euo pipefail
+          if [[ ! "$VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Version tag '$VERSION_TAG' must look like v1.2.3 or v1.2.3-rc.1"
             exit 1
-          }
-          Write-Output "Version $tag, publish: $env:PUBLISH"
-          "version=$tag" >> $env:GITHUB_OUTPUT
-          "publish=$env:PUBLISH" >> $env:GITHUB_OUTPUT
+          fi
+          echo "Version $VERSION_TAG, publish: $PUBLISH"
+          echo "version=$VERSION_TAG" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
 
       - name: Refuse to Overwrite an Existing Release
         if: steps.version.outputs.publish == 'true'
@@ -65,25 +63,24 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.version.outputs.version }}
         run: |
-          $ErrorActionPreference = "Stop"
+          set -euo pipefail
           # A failing gh call (auth, network) stops the step instead of reading as "no release"
-          $PSNativeCommandUseErrorActionPreference = $true
           # Lists drafts too: action-gh-release would reuse a draft and replace its assets
-          $releases = gh release list --limit 1000 --json tagName --jq '.[].tagName'
-          if ($releases -contains $env:TAG) {
-            Write-Output "::error::A release for $env:TAG already exists (published or draft). This workflow never overwrites one; delete a stale draft by hand to rebuild."
+          releases="$(gh release list --limit 1000 --json tagName --jq '.[].tagName')"
+          if grep -Fxq "$TAG" <<<"$releases"; then
+            echo "::error::A release for $TAG already exists (published or draft). This workflow never overwrites one; delete a stale draft by hand to rebuild."
             exit 1
-          }
+          fi
           # A tag push builds the tagged commit; a manual run builds its branch head, so with an
           # existing tag the assets could come from another commit than the tag points at
-          if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
-            $refs = gh api "repos/$env:GH_REPO/git/matching-refs/tags/$env:TAG" --jq '.[].ref'
-            if ($refs -ccontains "refs/tags/$env:TAG") {
-              Write-Output "::error::Tag $env:TAG already exists. Release it from its tag-push run (re-run that run), not from a manual run."
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            refs="$(gh api "repos/$GH_REPO/git/matching-refs/tags/$TAG" --jq '.[].ref')"
+            if grep -Fxq "refs/tags/$TAG" <<<"$refs"; then
+              echo "::error::Tag $TAG already exists. Release it from its tag-push run (re-run that run), not from a manual run."
               exit 1
-            }
-          }
-          Write-Output "No release and no conflicting tag for $env:TAG"
+            fi
+          fi
+          echo "No release and no conflicting tag for $TAG"
 
   # Lint, unit tests and the vite build: the CI workflow itself, on this same commit
   checks:
@@ -93,7 +90,8 @@ jobs:
 
   build-and-release:
     needs: [prepare, checks]
-    runs-on: windows-latest
+    # 22.04 keeps the build close to the oldest Linux the desktop bundle is tested on
+    runs-on: ubuntu-22.04
     permissions:
       contents: write   # creates the draft release
     env:
@@ -102,13 +100,6 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
-
-      - name: Sync app/package.json Version
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          # v0.3.0 -> 0.3.0
-          npm --prefix app version ($env:VERSION -replace '^v', '') --no-git-tag-version --allow-same-version
 
       # The version the backend is developed and tested on
       - name: Set up Python 3.11
@@ -120,84 +111,88 @@ jobs:
             api/requirements.txt
             api/constraints.txt
 
-      # Latest 22.x, not the runner's cached one: Electron 45 needs >= 22.12
+      # Latest 22.x: Vite 5 needs >= 20.19
       - name: Set up Node.js 22
         uses: actions/setup-node@v7
         with:
           node-version: "22"
           check-latest: true
           cache: "npm"
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: vsite/package-lock.json
 
-      # Every package is pinned by api/constraints.txt (pip freeze of the tested dev venv). The
-      # torch==2.14.1+cu130 pin takes the CUDA wheel from the cu130 index that requirements.txt adds.
-      - name: Install Python Dependencies (CUDA 13.0 PyTorch) & PyInstaller
-        working-directory: api
+      # build_linux.sh builds the QuickJS shell as a static musl binary
+      - name: Install Build Tools
         run: |
-          $ErrorActionPreference = "Stop"
-          # Otherwise a failing pip doesn't stop the script: the step only sees the last exit code
-          $PSNativeCommandUseErrorActionPreference = $true
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller -c constraints.txt
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools cmake build-essential
+
+      # Every package is pinned by api/constraints.txt. The torch==2.14.1+cu130 pin takes the CUDA
+      # wheel from the cu130 index that requirements.txt adds.
+      - name: Install Python Dependencies
+        run: |
+          python -m venv api/.venv
+          api/.venv/bin/python -m pip install --upgrade pip
+          api/.venv/bin/pip install -r api/requirements.txt -c api/constraints.txt
 
       # pip has no strict mode for constraints: a dependency missing from constraints.txt would
       # install unpinned without a word
       - name: Check That Every Installed Python Package Is Pinned
-        working-directory: api
         run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          python -m pip check
-          # Normalize names (case, - _ .): pip versions print them differently
-          $normalize = { $n, $v = $_ -split '==', 2; ($n -replace '[-_.]+', '-').ToLowerInvariant() + "==$v" }
-          $pinned = Get-Content constraints.txt | Where-Object { $_ -match '==' -and $_ -notmatch '^\s*#' } | ForEach-Object $normalize
-          $unpinned = python -m pip freeze | ForEach-Object $normalize | Where-Object { $_ -notin $pinned }
-          if ($unpinned) {
-            Write-Output "::error::Installed without a pin in api/constraints.txt: $($unpinned -join ', ')"
-            exit 1
+          api/.venv/bin/pip check
+          api/.venv/bin/python - <<'PY'
+          import pathlib, re, subprocess
+          normalize = lambda line: re.sub(r"[-_.]+", "-", line.split("==")[0]).lower() + "==" + line.split("==", 1)[1]
+          pinned = {
+              normalize(line.strip())
+              for line in pathlib.Path("api/constraints.txt").read_text().splitlines()
+              if "==" in line and not line.lstrip().startswith("#")
           }
-          Write-Output "Every installed package is pinned"
+          installed = subprocess.check_output(["api/.venv/bin/pip", "freeze"], text=True)
+          unpinned = []
+          for line in installed.splitlines():
+              if "==" not in line:
+                  continue
+              if normalize(line) not in pinned:
+                  unpinned.append(line)
+          if unpinned:
+              raise SystemExit("Installed without a pin in api/constraints.txt: " + ", ".join(unpinned))
+          print("Every installed package is pinned")
+          PY
 
-      - name: Build Python Backend with PyInstaller
-        working-directory: api
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          python -m PyInstaller api.spec -y
-
-      # Before packaging: start api.exe like the app does and check that it answers (runs locally too)
-      - name: Smoke-Test the Frozen Backend
+      # Starts api/main.py the way the shell does and checks /models and /fs/list (runs locally too)
+      - name: Smoke-Test the Backend
         timeout-minutes: 10
-        run: ./.github/scripts/smoke-test-backend.ps1 -ExePath api/dist/api/api.exe
+        run: ./.github/scripts/smoke-test-backend.sh api/.venv/bin/python
 
-      - name: Install Node Dependencies
-        working-directory: app
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          npm ci
+      # Frontend + QuickJS shell + packaged api/ in dist/vblis-linux-x86_64. The shell smoke test
+      # inside the script only exercises the static page; the backend was tested above.
+      - name: Build Linux Desktop Bundle
+        run: ./build_linux.sh --no-smoke
 
-      - name: Build React Frontend & Package Electron App
-        working-directory: app
+      - name: Smoke-Test the Packaged Shell
+        timeout-minutes: 5
         run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          npm run build
-          npx electron-builder build --windows --publish never
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cp -a dist/vblis-linux-x86_64/. "$work/"
+          # exec so $! is the shell binary itself, not a subshell around it
+          ( cd "$work" && exec env VBLIS_NO_BACKEND=1 VBLIS_NO_BROWSER=1 VBLIS_SHELL_PORT=8124 ./vblis >shell.log 2>&1 ) &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8124/; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8124/ | grep -q '__VBLIS_SHELL__'
+          curl -fsS -o /dev/null http://127.0.0.1:8124/index.js
+          echo "Packaged shell serves the page and bundle"
 
-      # The web interface on its own, for a server without Node (install-linux.sh --web-zip, Docker):
-      # the contents of app/dist with index.html at the zip's root. Python's zipfile writes "/" in entry
-      # names on every system, which unzip on Linux needs.
-      - name: Zip the Web Interface
-        working-directory: app
+      - name: Package Release Assets
         run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          if (-not (Test-Path dist/index.html)) { Write-Output "::error::app/dist/index.html is missing"; exit 1 }
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          @'
+          set -euo pipefail
+          mkdir -p dist-built
+          tar -C dist -czf "dist-built/VBLIS-linux-x86_64-$VERSION.tar.gz" vblis-linux-x86_64
+          python - "vsite/dist" "dist-built/VBLIS-web-$VERSION.zip" <<'PY'
           import pathlib, sys, zipfile
           source, target = pathlib.Path(sys.argv[1]), sys.argv[2]
           with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -208,54 +203,39 @@ jobs:
           if "index.html" not in names:
               sys.exit("index.html is not at the zip's root")
           print(f"{target}: {len(names)} files")
-          '@ | python - dist "dist-built/VBLIS-web-$version.zip"
+          PY
 
-      # GitHub release assets must be under 2 GiB each (v0.2.0: installer 1,852 MiB, 7z 1,554 MiB)
+      # GitHub release assets must be under 2 GiB each; the source-based Linux bundle is far smaller
       - name: Check Asset Sizes & Write SHA256SUMS.txt
-        working-directory: app/dist-built
+        working-directory: dist-built
         run: |
-          $ErrorActionPreference = "Stop"
-          $assets = @(Get-ChildItem -File | Where-Object Extension -in ".exe", ".7z", ".zip" | Sort-Object Name)
-          foreach ($ext in ".exe", ".7z", ".zip") {
-            $count = @($assets | Where-Object Extension -eq $ext).Count
-            if ($count -ne 1) { Write-Output "::error::Expected one $ext in app/dist-built, found $count"; exit 1 }
-          }
-          $tooBig = $false
-          foreach ($a in $assets) {
-            $size = "{0:N0} MiB" -f ($a.Length / 1MB)
-            Write-Output ("{0,-40} {1,10}" -f $a.Name, $size)
-            if ($a.Length -ge 2GB) {
-              Write-Output "::error::$($a.Name) is $size; GitHub release assets must be under 2 GiB (2,048 MiB)"
-              $tooBig = $true
-            } elseif ($a.Length -gt 1.9GB) {
-              Write-Output "::warning::$($a.Name) is $size, close to GitHub's 2 GiB limit for release assets"
-            }
-          }
-          if ($tooBig) { exit 1 }
-          # sha256sum format (lowercase hash, two spaces, name; LF, no BOM), so sha256sum -c reads it
-          $lines = foreach ($a in $assets) {
-            "{0}  {1}" -f (Get-FileHash $a.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $a.Name
-          }
-          # Full path: .NET's current directory is not the step's working directory
-          [IO.File]::WriteAllText((Join-Path $PWD "SHA256SUMS.txt"), ($lines -join "`n") + "`n")
-          Get-Content SHA256SUMS.txt
+          set -euo pipefail
+          shopt -s nullglob
+          assets=( *.tar.gz *.zip )
+          if [ "${#assets[@]}" -ne 2 ]; then
+            echo "::error::Expected one .tar.gz and one .zip in dist-built, found ${#assets[@]}"
+            exit 1
+          fi
+          too_big=0
+          for asset in "${assets[@]}"; do
+            size=$(stat -c %s "$asset")
+            printf '%-40s %10s MiB\n' "$asset" "$((size / 1024 / 1024))"
+            if [ "$size" -ge 2147483648 ]; then
+              echo "::error::$asset is larger than GitHub's 2 GiB release-asset limit"
+              too_big=1
+            fi
+          done
+          [ "$too_big" -eq 0 ]
+          sha256sum "${assets[@]}" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-      - name: Upload Installer (.exe)
+      - name: Upload Linux Bundle
         uses: actions/upload-artifact@v7
         with:
-          name: VBLIS-Installer-${{ env.VERSION }}
+          name: VBLIS-Linux-${{ env.VERSION }}
           path: |
-            app/dist-built/*.exe
-            app/dist-built/SHA256SUMS.txt
-          retention-days: 30
-
-      - name: Upload Portable Archive (.7z)
-        uses: actions/upload-artifact@v7
-        with:
-          name: VBLIS-Portable-${{ env.VERSION }}
-          path: |
-            app/dist-built/*.7z
-            app/dist-built/SHA256SUMS.txt
+            dist-built/*.tar.gz
+            dist-built/SHA256SUMS.txt
           retention-days: 30
 
       - name: Upload Web Interface (.zip)
@@ -263,8 +243,8 @@ jobs:
         with:
           name: VBLIS-Web-${{ env.VERSION }}
           path: |
-            app/dist-built/*.zip
-            app/dist-built/SHA256SUMS.txt
+            dist-built/*.zip
+            dist-built/SHA256SUMS.txt
           retention-days: 30
 
       - name: Create Draft GitHub Release
@@ -282,9 +262,8 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            app/dist-built/*.exe
-            app/dist-built/*.7z
-            app/dist-built/*.zip
-            app/dist-built/SHA256SUMS.txt
+            dist-built/*.tar.gz
+            dist-built/*.zip
+            dist-built/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
