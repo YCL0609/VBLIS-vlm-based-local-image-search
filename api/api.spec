@@ -7,6 +7,9 @@ block_cipher = None
 
 datas = []
 datas += [('place_data/places.npz', 'place_data')]
+# The network listener serves the built web UI when sharing; build_linux.sh stages it here.
+if os.path.isdir('web'):
+    datas += [('web', 'web')]
 binaries = []
 hidden_imports = [
     'uvicorn.logging', 

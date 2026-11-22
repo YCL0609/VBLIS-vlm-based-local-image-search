@@ -30,10 +30,28 @@ VBLIS is a powerful, privacy-focused local image search application that uses ad
 
 ## System Requirements
 
-- Windows 10 or 11, 64-bit.
+- Linux x86-64 for the desktop shell in this branch. The upstream Windows installer is not part of it.
 - Server mode also runs on a 64-bit Linux (x86-64 or ARM64) with Python 3.11 to 3.13, or in Docker. See [SERVER.md](SERVER.md).
 - An NVIDIA GPU is optional: VBLIS uses it through CUDA when one is available (a GeForce GTX 16 or RTX 20-series card or newer, with NVIDIA driver 580 or newer) and runs on the CPU otherwise (indexing is slower). Older cards, such as the GTX 10 series, run on the CPU, and Settings says why.
 - Disk space: about 3.7 GB for the app, plus 0.6–4.3 GB for each downloaded model, plus the index and the thumbnail cache.
+
+## Linux Desktop Build
+
+This branch replaces the Electron host with a small QuickJS shell: a static musl binary that serves the
+built frontend on `127.0.0.1:11120` and starts the Python backend on `127.0.0.1:8000`. The frontend lives
+in `vsite/` and is packaged into the shell.
+
+Prerequisites: Node.js 18+, Python 3.11–3.13, `cmake`, `gcc` and `musl-gcc`.
+
+```bash
+./build_linux.sh                 # frontend + shell + backend sources + smoke test
+./build_linux.sh --binary        # also freeze the backend with PyInstaller
+```
+
+The result is `dist/vblis-linux-x86_64/`; start it with `./run.sh` inside that folder. On first run the
+launcher creates a virtualenv under `~/.local/share/vblis` and installs `api/requirements.txt`
+(PyTorch cu130 by default; NVIDIA driver 580+ is needed for GPU, CPU otherwise). Server mode still works
+as described in [SERVER.md](SERVER.md).
 
 ## Supported Formats
 
