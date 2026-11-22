@@ -8,7 +8,7 @@
 #   --torch cuda   PyTorch with NVIDIA CUDA 13.0 (x86-64 only; GTX 16 / RTX 20 or newer, driver 580 or
 #                  newer; a few GB more to download)
 #   --data-dir     where models, the index and the settings live (default ~/.local/share/vblis)
-#   --python       the Python to build the environment with (3.11 to 3.13; default python3)
+#   --python       the Python to build the environment with (3.11 to 3.14; default python3)
 #   --web-zip      the web interface from a release (VBLIS-web-<version>.zip), unpacked into vsite/dist;
 #                  use it when Node.js isn't installed
 #   --no-service   don't write the systemd user service
@@ -51,7 +51,7 @@ chmod 700 "$DATA_DIR"
 
 say "Python environment ($VENV)"
 if [ ! -x "$VENV/bin/python" ]; then
-  if "$PYTHON" -c 'import sys; sys.exit(0 if (3, 11) <= sys.version_info[:2] <= (3, 13) else 1)' 2>/dev/null \
+  if "$PYTHON" -c 'import sys; sys.exit(0 if (3, 11) <= sys.version_info[:2] <= (3, 14) else 1)' 2>/dev/null \
       && "$PYTHON" -m venv "$VENV" 2>/dev/null; then
     :
   elif command -v uv >/dev/null 2>&1; then
@@ -60,7 +60,7 @@ if [ ! -x "$VENV/bin/python" ]; then
     uv venv --seed --python 3.11 "$VENV"
   else
     rm -rf "$VENV"
-    fail "Python 3.11 to 3.13 with venv is needed. On Debian or Ubuntu: sudo apt install python3-venv python3-pip"
+    fail "Python 3.11 to 3.14 with venv is needed. On Debian or Ubuntu: sudo apt install python3-venv python3-pip"
   fi
 fi
 PY="$VENV/bin/python"

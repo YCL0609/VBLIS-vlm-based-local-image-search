@@ -11,7 +11,7 @@
 #
 # 可用环境变量：
 #   VBLIS_VENV_DIR          指定 venv 目录
-#   VBLIS_SYSTEM_PY         指定用来创建 venv 的系统解释器（默认自动找 python3.x）
+#   VBLIS_SYSTEM_PY         指定用来创建 venv 的系统解释器（默认自动找 python3.11–3.14）
 #   VBLIS_TORCH_SPEC        torch 的 pip 规格（默认 torch>=2.14.1，CPU 机器同样可用）
 #   VBLIS_TORCH_INDEX       torch 的索引地址（默认 cu130；CPU 版可指向 https://download.pytorch.org/whl/cpu）
 #   VBLIS_NO_VENV_INSTALL=1 禁止自动安装；环境不可用时直接报错退出
@@ -20,6 +20,7 @@ set -euo pipefail
 API_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR="${VBLIS_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/vblis}"
 REQ="$API_DIR/requirements.txt"
+CONSTRAINTS="$API_DIR/constraints.txt"
 TORCH_SPEC="${VBLIS_TORCH_SPEC:-torch>=2.14.1}"
 TORCH_INDEX="${VBLIS_TORCH_INDEX:-https://download.pytorch.org/whl/cu130}"
 
@@ -42,6 +43,7 @@ STAMP="$VENV_DIR/.vblis-ready"
 fingerprint() {
     "$VENV_PY" -c 'import sys; print(sys.version)' 2>/dev/null || echo unknown
     cat "$REQ"
+    if [ -f "$CONSTRAINTS" ]; then cat "$CONSTRAINTS"; fi
     echo "torch-spec=$TORCH_SPEC"
     echo "torch-index=$TORCH_INDEX"
 }
@@ -66,19 +68,52 @@ if [ "${VBLIS_NO_VENV_INSTALL:-0}" = "1" ]; then
     die "虚拟环境 $VENV_DIR 不可用，且设置了 VBLIS_NO_VENV_INSTALL=1（先手动安装依赖）"
 fi
 
-# ── 找系统 python（3.11–3.13，与上游支持的版本一致） ─────────────────────────
+# ── 找系统 python（3.11–3.14；torch 2.14.1 为这些版本都提供 Linux 轮子） ─────
+# 3.14 在找不到旧版本时也能用；PATH 之外（pyenv、conda、/usr/local/bin）再找一轮。
+PYTHON_CANDIDATES=(python3.14 python3.13 python3.12 python3.11 python3 python)
+PYTHON_SEARCH_DIRS=(
+    "$HOME/.local/bin" "$HOME/.pyenv/shims" "$HOME/miniconda3/bin" "$HOME/anaconda3/bin"
+    /opt/conda/bin /opt/homebrew/bin /usr/local/bin /usr/bin /bin
+)
+
+python_ok() {
+    "$1" -c 'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] <= (3, 14) else 1)' 2>/dev/null
+}
+
 find_system_python() {
     if [ -n "${VBLIS_SYSTEM_PY:-}" ]; then
-        command -v "$VBLIS_SYSTEM_PY" >/dev/null 2>&1 || die "VBLIS_SYSTEM_PY=$VBLIS_SYSTEM_PY 不存在"
+        command -v "$VBLIS_SYSTEM_PY" >/dev/null 2>&1 || [ -x "$VBLIS_SYSTEM_PY" ] \
+            || die "VBLIS_SYSTEM_PY=$VBLIS_SYSTEM_PY 不存在"
+        python_ok "$VBLIS_SYSTEM_PY" \
+            || die "VBLIS_SYSTEM_PY=$VBLIS_SYSTEM_PY 不是 Python 3.11–3.14（$("$VBLIS_SYSTEM_PY" -V 2>&1)）"
         echo "$VBLIS_SYSTEM_PY"; return
     fi
-    for candidate in python3.13 python3.12 python3.11 python3; do
-        if command -v "$candidate" >/dev/null 2>&1 \
-           && "$candidate" -c 'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] <= (3, 13) else 1)' 2>/dev/null; then
-            echo "$candidate"; return
-        fi
+    for candidate in "${PYTHON_CANDIDATES[@]}"; do
+        path="$(type -P "$candidate" 2>/dev/null || true)"
+        [ -n "$path" ] || continue
+        if python_ok "$path"; then echo "$path"; return; fi
     done
-    die "找不到 Python 3.11–3.13（设置 VBLIS_SYSTEM_PY 指向可用的解释器）"
+    for dir in "${PYTHON_SEARCH_DIRS[@]}"; do
+        for candidate in "${PYTHON_CANDIDATES[@]}"; do
+            path="$dir/$candidate"
+            [ -x "$path" ] || continue
+            if python_ok "$path"; then echo "$path"; return; fi
+        done
+    done
+    # uv 管理的解释器（装了 uv 但没把它加进 PATH 的情况）
+    if command -v uv >/dev/null 2>&1; then
+        for version in 3.14 3.13 3.12 3.11; do
+            path="$(uv python find "$version" 2>/dev/null || true)"
+            if [ -n "$path" ] && python_ok "$path"; then echo "$path"; return; fi
+        done
+    fi
+    found=""
+    for candidate in "${PYTHON_CANDIDATES[@]}"; do
+        path="$(type -P "$candidate" 2>/dev/null || true)"
+        [ -n "$path" ] && found="$found $candidate($("$path" -V 2>&1 | head -n1))"
+    done
+    die "找不到 Python 3.11–3.14。已检测到:${found:- 无}；
+  用 VBLIS_SYSTEM_PY=/path/to/python3.12 指定解释器，或安装 python3.12（Arch: sudo pacman -S python312；Ubuntu: sudo apt install python3.12-venv）"
 }
 
 # ── 创建 venv ───────────────────────────────────────────────────────────────
@@ -113,7 +148,9 @@ else
 fi
 
 log "安装 requirements.txt"
-"$VENV_PY" -m pip install --only-binary :all: -r "$REQ" >&2
+PIP_INSTALL=(-r "$REQ")
+if [ -f "$CONSTRAINTS" ]; then PIP_INSTALL+=(-c "$CONSTRAINTS"); fi
+"$VENV_PY" -m pip install --only-binary :all: "${PIP_INSTALL[@]}" >&2
 
 fingerprint | sha256sum | cut -d' ' -f1 > "$STAMP"
 
