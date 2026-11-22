@@ -393,7 +393,13 @@ def run_desktop(app) -> int:
     import parent_watch
 
     parent_watch.start()
-    uvicorn.run(app, host="127.0.0.1", port=8000, proxy_headers=False)
+    # The desktop shell passes VBLIS_API_PORT when 8000 is taken; the page learns the port from the
+    # same variable, so only change it together with the shell.
+    try:
+        port = int(os.environ.get("VBLIS_API_PORT", "8000"))
+    except ValueError:
+        port = 8000
+    uvicorn.run(app, host="127.0.0.1", port=port, proxy_headers=False)
     return 0
 
 

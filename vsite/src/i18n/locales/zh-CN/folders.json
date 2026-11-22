@@ -105,6 +105,15 @@
     "skipped_other": "有 {{count}} 个文件夹名称无法显示。",
     "readFailed": "无法读取此文件夹。",
     "add_other": "添加 {{count}} 个文件夹",
-    "adding": "正在添加……"
+    "adding": "正在添加……",
+    "localTitle": "添加文件夹",
+    "localSubtitle": "浏览这台电脑上的文件夹",
+    "home": "主目录",
+    "hint": "进入目标文件夹后点右侧按钮确认。",
+    "selectThis": "索引此文件夹",
+    "cancel": "取消",
+    "loadFailed": "无法读取该文件夹。",
+    "showHidden": "显示隐藏项",
+    "hideHidden": "隐藏隐藏项"
   }
 }

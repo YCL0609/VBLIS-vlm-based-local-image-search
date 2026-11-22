@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import TitleBar from './TitleBar';
-import { API_BASE } from './config';
+import { API_BASE, IS_NETWORK } from './config';
 import { cn } from './utils/cn';
 import { useTaskQueue } from './hooks/useTaskQueue';
 import { useThemePreferences } from './hooks/useThemePreferences';
@@ -34,6 +34,7 @@ import { TerminalResultsModal } from './components/search/TerminalResultsModal';
 import { FolderContentsModal } from './components/folders/FolderContentsModal';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { FolderPickerModal } from './components/folders/FolderPickerModal';
+import { LocalFolderPickerModal } from './components/folders/LocalFolderPickerModal';
 import { HttpWarningBanner } from './components/status/HttpWarningBanner';
 import { apiFetch } from './utils/api';
 import { useSession } from './session/sessionContext';
@@ -52,6 +53,8 @@ function App() {
   const [showConfirmClear, setShowConfirmClear] = useState(false);
   // The picker for folders on the server, which is how the owner adds folders from a browser.
   const [showFolderPicker, setShowFolderPicker] = useState(false);
+  // The desktop shell's picker: it browses this computer instead of the server's library roots.
+  const [showLocalFolderPicker, setShowLocalFolderPicker] = useState(false);
   const { theme, setTheme, uiTheme, setUiTheme } = useThemePreferences();
   const { toast, setToast } = useToast();
   const queue = useTaskQueue(API_BASE, setToast);
@@ -65,6 +68,7 @@ function App() {
     setSelectedVideoPath(group ? group.path : null);
   }, []);
   const closeFolderPicker = useCallback(() => setShowFolderPicker(false), []);
+  const closeLocalFolderPicker = useCallback(() => setShowLocalFolderPicker(false), []);
   // Opens Settings, on a group when one is named (an id from settingsGroups.js); a click event or nothing opens it
   // on the group used last. Every call makes a new request object, so the window tells a new request even for the
   // same group.
@@ -256,6 +260,7 @@ function App() {
     if (readOnly) return;
     if (!window.electronAPI) {
       if (mode === 'network' && isOwner) setShowFolderPicker(true);
+      else if (!IS_NETWORK) setShowLocalFolderPicker(true);
       return;
     }
     const paths = await window.electronAPI.openDirectory();
@@ -368,6 +373,17 @@ function App() {
 
       {showFolderPicker && !readOnly && (
         <FolderPickerModal uiTheme={uiTheme} onClose={closeFolderPicker} onConfirm={queue.enqueueFolderIndexing} />
+      )}
+
+      {showLocalFolderPicker && !readOnly && (
+        <LocalFolderPickerModal
+          uiTheme={uiTheme}
+          onClose={closeLocalFolderPicker}
+          onSelect={async (path) => {
+            const queued = await queue.enqueueFolderIndexing([path]);
+            if (queued) closeLocalFolderPicker();
+          }}
+        />
       )}
 
       {/* Folder Contents Modal */}

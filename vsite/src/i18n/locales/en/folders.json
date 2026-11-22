@@ -123,6 +123,15 @@
     "readFailed": "Could not read this folder.",
     "add_one": "Add {{count}} folder",
     "add_other": "Add {{count}} folders",
-    "adding": "Adding..."
+    "adding": "Adding...",
+    "localTitle": "Add a folder",
+    "localSubtitle": "Browse folders on this computer",
+    "home": "Home",
+    "hint": "Pick the folder to index, then confirm.",
+    "selectThis": "Index this folder",
+    "cancel": "Cancel",
+    "loadFailed": "Could not list this folder.",
+    "showHidden": "Show hidden",
+    "hideHidden": "Hide hidden"
   }
 }

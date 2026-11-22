@@ -11,18 +11,20 @@ const resources = {
     error404: "<html><head><title>404 Not Found</title></head><body><center><h1>404 Not Found</h1></center><hr></body></html>"
 }
 
+const PORT = Number(std.getenv('VBLIS_SHELL_PORT')) || 11120;
+const API_HOST = '127.0.0.1';
+const API_PORT = std.getenv('VBLIS_API_PORT') || '8000';
+
 // 页面由 quickjs 外壳提供时，前端要按桌面模式走（绝对 API 基址、不启用同源 /api 会话）。
 // 这个标记只注入给外壳自己返回的 index.html；浏览器直接访问 Vite dev server 时不受影响。
+// 同时带上后端端口：外壳允许用 VBLIS_API_PORT 换端口，前端不能写死 8000。
 const shellHtml = (() => {
-    const marker = '<script>window.__VBLIS_SHELL__=true</script>';
+    const marker = '<script>window.__VBLIS_SHELL__=true;'
+        + "window.__VBLIS_API_BASE__='http://" + API_HOST + ":" + API_PORT + "'</script>";
     const html = resources.html || '';
     if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (tag) => tag + marker);
     return marker + html;
 })();
-
-const PORT = Number(std.getenv('VBLIS_SHELL_PORT')) || 11120;
-const API_HOST = '127.0.0.1';
-const API_PORT = std.getenv('VBLIS_API_PORT') || '8000';
 
 /** 拼接本地路径 */
 const joinPath = (...parts) => parts

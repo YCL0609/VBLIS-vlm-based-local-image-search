@@ -24,7 +24,7 @@ import replica
 import security
 import win_asyncio
 from network_listener import NetworkListener
-from routers import export, indexing, media, models, queue, search, settings, sharing
+from routers import export, indexing, local_fs, media, models, queue, search, settings, sharing
 
 # Windows: a browser resetting a connection (a video player does, while it buffers or seeks) no longer
 # prints a traceback and leaves the socket open
@@ -59,7 +59,7 @@ security.install(app)
 # A read-only copy of another machine's index answers writes to it with 409
 replica.install(app)
 
-for _module in (settings, search, indexing, queue, models, media, sharing, export):
+for _module in (settings, search, indexing, queue, models, media, sharing, export, local_fs):
     app.include_router(_module.router)
 
 if __name__ == "__main__":

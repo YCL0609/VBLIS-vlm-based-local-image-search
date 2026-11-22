@@ -13,12 +13,14 @@ const detectNetworkMode = () => {
 
 export let IS_NETWORK = detectNetworkMode();
 
-// The QuickJS shell serves this page on 127.0.0.1:11120 and starts the backend on 127.0.0.1:8000;
-// in desktop mode API_BASE is absolute, so the page and the API may live on different ports.
+// The QuickJS shell serves this page on 127.0.0.1:11120 and starts the backend on 127.0.0.1:8000
+// (or VBLIS_API_PORT); in desktop mode API_BASE is absolute, so page and API may live on different
+// ports. The shell injects window.__VBLIS_API_BASE__ with the port it actually started.
 // Lets a test switch the mode on without reloading the module. API_BASE stays as it was computed.
 export const setNetworkModeForTests = (value) => { IS_NETWORK = Boolean(value); };
 
-export const API_BASE = IS_NETWORK ? `${window.location.origin}/api` : 'http://127.0.0.1:8000';
+const shellApiBase = typeof window !== 'undefined' ? window.__VBLIS_API_BASE__ : '';
+export const API_BASE = IS_NETWORK ? `${window.location.origin}/api` : (shellApiBase || 'http://127.0.0.1:8000');
 
 // Read lazily: Electron's preload sets it after this module could be imported, and tests set it.
 // The env fallback is for a plain browser tab in dev; the DEV guard makes it dead code in a

@@ -88,6 +88,19 @@ describe('network mode', () => {
     }
   });
 
+  it('uses the backend port the shell injects', async () => {
+    window.__VBLIS_SHELL__ = true;
+    window.__VBLIS_API_BASE__ = 'http://127.0.0.1:8123';
+    try {
+      const { IS_NETWORK, API_BASE } = await loadConfig();
+      expect(IS_NETWORK).toBe(false);
+      expect(API_BASE).toBe('http://127.0.0.1:8123');
+    } finally {
+      delete window.__VBLIS_SHELL__;
+      delete window.__VBLIS_API_BASE__;
+    }
+  });
+
   it('is off under test, which keeps the local backend address', async () => {
     const { IS_NETWORK, API_BASE } = await loadConfig('test');
     expect(IS_NETWORK).toBe(false);
