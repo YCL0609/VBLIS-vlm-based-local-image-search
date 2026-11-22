@@ -7,6 +7,19 @@ VBLIS is a powerful, privacy-focused local image search application that uses ad
 
 ![VBLIS main UI screenshot](demo-pic-main-ui.png)
 
+## About This Fork
+
+This repository is a fork of [opoeci6/VBLIS-vlm-based-local-image-search](https://github.com/opoeci6/VBLIS-vlm-based-local-image-search). It is based on upstream v0.7.0 and keeps its search engine, models, server mode and replica mode, but replaces the Electron desktop host with a Linux-native shell:
+
+- The desktop build targets Linux x86-64 only. The Electron app, Windows installer and Electron-based packaging are not included; upstream releases are not used here.
+- The React/Vite frontend lives in `vsite/` (upstream calls it `app/`) and is built into static files.
+- A small static shell in `quickjs/` serves the UI on `127.0.0.1:11120` and starts the Python backend on `127.0.0.1:8000`. The shell passes the actual API address to the frontend at runtime.
+- The desktop backend only accepts loopback requests and does not use the upstream shared API token. Server mode keeps upstream accounts, sessions, TLS and per-account permissions.
+- The desktop app has its own folder picker (`GET /fs/list`), so folders can be added without Electron.
+- Releases are built by the Linux workflow as a `VBLIS-linux-x86_64-<version>.tar.gz` bundle and a `VBLIS-web-<version>.zip`.
+
+For building from source, see [Linux Desktop Build](#linux-desktop-build). For server and replica deployment, see [SERVER.md](SERVER.md).
+
 ## Features
 
 - **Semantic Search**: Search your images and videos using natural language (e.g., "sunset at the beach" or "a cat sitting on a laptop").
@@ -24,15 +37,15 @@ VBLIS is a powerful, privacy-focused local image search application that uses ad
 - **GPU Acceleration**: Built-in support for NVIDIA GPUs via CUDA for fast inference. Without one, VBLIS runs on the CPU.
 - **HEIC/HEIF and AVIF Support**: Full support for modern image formats commonly used on high-end cameras, iPhones and the web.
 - **Two Interface Styles**: A modern style and a terminal style, each in dark and light mode.
-- **English and Simplified Chinese**: The interface follows the Windows language, or the language you choose in the settings.
-- **Server Mode**: Use your library from browsers on other devices, phones included, with an account for each person and per-account permissions. Turn on **Share on my network** in the Windows app's Settings, or run VBLIS as a server on Linux (also in Docker) or Windows. See [SERVER.md](SERVER.md).
+- **English and Simplified Chinese**: The interface follows the system language, or the language you choose in the settings.
+- **Server Mode**: Use your library from browsers on other devices, phones included, with an account for each person and per-account permissions. Turn on **Share on my network** in the desktop app's Settings, or run VBLIS as a server on Linux (also in Docker) or Windows. See [SERVER.md](SERVER.md).
 - **Replica Mode**: Index on your PC, export the index into one file, and import it on a small machine (an Orange Pi, a NAS, a server) that then serves the library read-only without indexing anything itself. See [SERVER.md](SERVER.md).
 
 ## System Requirements
 
 - Linux x86-64 for the desktop shell in this branch. The upstream Windows installer is not part of it.
 - Server mode also runs on a 64-bit Linux (x86-64 or ARM64) with Python 3.11 to 3.14, or in Docker. See [SERVER.md](SERVER.md).
-- An NVIDIA GPU is optional: VBLIS uses it through CUDA when one is available (a GeForce GTX 16 or RTX 20-series card or newer, with NVIDIA driver 580 or newer) and runs on the CPU otherwise (indexing is slower). Older cards, such as the GTX 10 series, run on the CPU, and Settings says why.
+- An NVIDIA GPU is optional: VBLIS uses it through CUDA when one is available (a GeForce GTX 16 or RTX 20-series card or newer, with NVIDIA driver 580 or newer) and runs on the CPU otherwise (indexing is slower). Older cards, such as the GTX 10 series, run on the CPU, and Settings says why. See [NVIDIA GPUs on Linux](#nvidia-gpus-on-linux) for driver checks and common problems.
 - Disk space: about 3.7 GB for the app, plus 0.6–4.3 GB for each downloaded model, plus the index and the thumbnail cache.
 
 ## Linux Desktop Build
@@ -54,6 +67,28 @@ launcher creates a virtualenv under `~/.local/share/vblis` and installs `api/req
 (PyTorch cu130 by default; NVIDIA driver 580+ is needed for GPU, CPU otherwise). Server mode still works
 as described in [SERVER.md](SERVER.md).
 
+## NVIDIA GPUs on Linux
+
+The default environment installs PyTorch built for CUDA 13.0 (`cu130`), which needs NVIDIA driver **580 or newer**. Only the driver is required: the CUDA runtime libraries are included in the PyTorch wheels, so do not install a separate CUDA toolkit or cuDNN for VBLIS.
+
+Check the driver and GPU before the first launch:
+
+```bash
+nvidia-smi
+```
+
+It should list the GPU and a driver version of 580 or newer. If it fails, the kernel driver is not loaded, the GPU is not visible, or Secure Boot rejected the module.
+
+Common problems:
+
+- **Driver older than 580.** VBLIS still runs, on the CPU; Settings → **Models and GPU** explains why the GPU is unavailable. Install a 580+ driver from your distribution (Arch: `nvidia` or `nvidia-open`; Ubuntu: `nvidia-driver-580` or `sudo ubuntu-drivers install`; Fedora: RPM Fusion), then reboot.
+- **"Driver/library version mismatch" after a driver upgrade.** Reboot, or unload and reload the NVIDIA kernel modules, so that running processes release the old driver.
+- **`torch.cuda.is_available()` is false, or PyTorch reports "CUDA driver version is insufficient for CUDA runtime version".** The driver is missing, too old, or not loaded. Check `nvidia-smi`, `lsmod | grep nvidia` and `dmesg`.
+- **Secure Boot.** The NVIDIA kernel module must be signed (DKMS with MOK enrollment); otherwise it will not load even when the driver package is installed.
+- **Laptops with hybrid graphics.** CUDA uses the discrete NVIDIA GPU when `nvidia-smi` lists it. If it is not listed, check the BIOS/UEFI settings and your distribution's PRIME configuration.
+- **Unsupported GPU.** CUDA 13 supports GeForce GTX 16 and RTX 20 series or newer; older cards such as the GTX 10 series run on the CPU.
+- **Docker or server mode.** A GPU inside a container needs the NVIDIA Container Toolkit and `--gpus all`; see [SERVER.md](SERVER.md).
+
 ## Supported Formats
 
 - **Images:** JPEG, PNG, WebP, BMP, HEIC/HEIF, AVIF
@@ -73,7 +108,7 @@ The `naflex` models look at each image in its own aspect ratio; the others resiz
 
 ## How to Use
 
-1. **Download & Run**: From the [Releases](https://github.com/opoeci6/VBLIS-vlm-based-local-image-search/releases) page, download the latest `VBLIS-linux-x86_64-<version>.tar.gz`, extract it into a folder you can write to, and start `./run.sh` (or the `vblis` binary). The first launch creates a Python environment in `~/.local/share/vblis/venv` and downloads PyTorch and the backend dependencies; it needs Python 3.11–3.14, network access and a few GB of disk. Later launches reuse it.
+1. **Download & Run**: From the [Releases](https://github.com/YCL0609/VBLIS-vlm-based-local-image-search/releases) page, download the latest `VBLIS-linux-x86_64-<version>.tar.gz`, extract it into a folder you can write to, and start `./run.sh` (or the `vblis` binary). The first launch creates a Python environment in `~/.local/share/vblis/venv` and downloads PyTorch and the backend dependencies; it needs Python 3.11–3.14, network access and a few GB of disk. Later launches reuse it.
 For a server on Linux or in Docker, follow [SERVER.md](SERVER.md) instead. The release's `VBLIS-web-<version>.zip` holds the web interface, so the server needs no Node.js.
 > [!NOTE]
 > The Linux bundle isn't code-signed. To check a download, run `sha256sum -c SHA256SUMS.txt` in the folder with the downloaded files.
@@ -87,13 +122,13 @@ For a server on Linux or in Docker, follow [SERVER.md](SERVER.md) instead. The r
 7. **Search Filters**: The **Filters** button next to the search bar narrows any search to images or videos, chosen folders, a date range (the date a photo or video was taken, or the file's modified date when it has none), a place (a country or region, or a region or city inside it, from the GPS data of the file), orientation, file format, a minimum resolution, and duplicates (exact copies or images that look alike). Changing a filter updates the current results right away. Date, place, orientation and resolution come from media details that VBLIS reads while indexing; for folders indexed with an older version, use **Read details now** in the Filters panel. Places are matched to the nearest known town or city without boundary data, so a photo taken close to a border or in a suburb can be named after the neighbouring place.
 8. **Model Management**: You can download, switch, and delete models in the settings.
 9. **Index and Cache Management**: You can clear the index and cache in the settings (**Library**).
-10. **Language**: Choose English or Simplified Chinese in the settings, or let VBLIS follow Windows. Searching works best with English queries; in Chinese, use common words.
+10. **Language**: Choose English or Simplified Chinese in the settings, or let VBLIS follow the system language. Searching works best with English queries; in Chinese, use common words.
 11. **Share on Your Network**: Turn on **Share on my network** in the settings, add an account for each person with **Manage accounts**, and open one of the addresses it shows in a browser on a phone or another computer. Sharing lasts while the app is open. See [SERVER.md](SERVER.md) for HTTPS, permissions and running VBLIS as a server.
 12. **Copy the Index to Another Device**: In the settings, **Library** → **Export for another device** writes the index into one file. Import it on the other machine with `import-index`, which maps your PC's folders to where the pictures are there; see [SERVER.md](SERVER.md).
 
 ## Upgrading
 
-- Your index, downloaded models and settings are kept. The installer keeps them in `%LOCALAPPDATA%\VBLIS`, and the portable version in the `VBLIS-data` folder next to `VBLIS.exe`. When you install over an older version, its data is moved there automatically.
+- Your index, downloaded models and settings are kept. On Linux they live in `~/.local/share/vblis` by default (set `VBLIS_DATA_DIR` to change it); the upstream Windows installer uses `%LOCALAPPDATA%\VBLIS`.
 - After upgrading from v0.2.0 or older, re-sync your folders once (the **Re-sync** button of each folder in the Indexed Folders panel). That picks up AVIF files, and turns portrait videos and photos that older versions indexed sideways upright. Only those files are embedded again.
 - If some HEIC photos showed up turned in v0.4.0 or older, re-sync their folder once and use **Clear Image Cache** in the settings. Only those photos are embedded again.
 - Upgrading from v0.5.0 or newer needs no re-indexing: the new PyTorch in v0.7.0 gives the same search results. Sharing stays off until you turn on **Share on my network**.
