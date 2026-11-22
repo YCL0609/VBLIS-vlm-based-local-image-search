@@ -3,7 +3,7 @@ import { notifySignedOut } from './session';
 
 export const API_TOKEN_HEADER = 'X-VBLIS-Token';
 
-// fetch() that adds the backend's shared-secret header (see electron/main.js).
+// fetch() that adds the backend's shared-secret header when a token is configured (the dev page).
 // In network mode there is no header (the session cookie goes along by itself); a 401 tells the app
 // that the session ended, and the response is still returned to the caller.
 export function apiFetch(url, options) {

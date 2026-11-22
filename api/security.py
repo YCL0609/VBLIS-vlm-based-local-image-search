@@ -1,55 +1,42 @@
-"""Local API hardening: shared-secret token auth, Host/CORS restrictions, upload cap, log redaction.
+"""Local API hardening: Host/CORS restrictions, upload cap, log redaction, and the desktop owner.
 
-The Electron app starts the backend with VBLIS_API_TOKEN set and sends it on every request, so
-other web pages and local processes can't use the API. See docs/refactor-plan.md (phase B2)."""
-import hmac
+The API listens on localhost only. TrustedHost rejects requests whose Host header is not a local
+name, CORS names the Vite dev server and the QuickJS shell as the only origins that may read
+responses, and the upload check turns away oversized image uploads before they are read.
+
+There is no shared-secret token: the QuickJS shell serves the page and starts the backend as the
+same user, so every request on this loopback interface belongs to the local owner. The network
+listener has its own account and session layer (see network_gate.py); this module only marks
+requests on the desktop app.
+"""
 import logging
 import os
 import re
-import secrets
 
-from starlette.datastructures import Headers, QueryParams
+from starlette.datastructures import Headers
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
 
 from auth_context import LOCAL_OWNER, SCOPE_KEY
 
-API_TOKEN_ENV = "VBLIS_API_TOKEN"
-API_TOKEN_HEADER = "X-VBLIS-Token"
-# <img src> can't send headers, so GET /image alone also accepts ?token=
-QUERY_TOKEN_PATHS = frozenset({"/image"})
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
-# app://vblis is the packaged renderer (app/electron/main.js); any localhost port is the Vite dev
-# server. The token is required either way.
-CORS_ORIGIN_REGEX = r"^(app://vblis|http://(localhost|127\.0\.0\.1)(:\d+)?)$"
+# The QuickJS shell serves the UI at 127.0.0.1:11120 and the API at 127.0.0.1:8000; both are the
+# same loopback origin as far as the browser is concerned, but any localhost port may read.
+CORS_ORIGIN_REGEX = r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 # Multipart framing added on top of the file itself
 UPLOAD_OVERHEAD_BYTES = 1024 * 1024
 UPLOAD_PATH = "/search/image"
 
-_UNAUTHORIZED = {"detail": "Missing or invalid API token"}
-_TOKEN_QUERY_RE = re.compile(r"([?&]token=)[^&\s\"]*")
 # Once the network listener runs, the access log also stops showing which files were asked for
-_PATH_QUERY_RE = re.compile(r"([?&](?:token|path|folder_path)=)[^&\s\"]*")
+_PATH_QUERY_RE = re.compile(r"([?&](?:path|folder_path)=)[^&\s\"]*")
 _redact_paths = False
 
 
 def redact_paths_in_access_log(enabled: bool = True) -> None:
     global _redact_paths
     _redact_paths = enabled
-
-
-def resolve_api_token(environ=os.environ) -> str:
-    """The token from VBLIS_API_TOKEN, or a random one when it isn't set. There is no open mode."""
-    token = (environ.get(API_TOKEN_ENV) or "").strip()
-    if token:
-        return token
-    print(
-        f"[Security] {API_TOKEN_ENV} is not set; using a random token, so only a client given "
-        f"that token can call the API. Set {API_TOKEN_ENV} to call the API yourself."
-    )
-    return secrets.token_hex(32)
 
 
 def is_within(path: str, roots) -> bool:
@@ -71,18 +58,16 @@ def is_within(path: str, roots) -> bool:
     return False
 
 
-class TokenAuthMiddleware:
-    """Pure ASGI middleware (not BaseHTTPMiddleware) so streamed FileResponses and the many
-    thumbnail requests aren't slowed down."""
+class LocalOwnerMiddleware:
+    """Marks every desktop request as the local owner, and rejects an oversized image upload
+    before its body is read.
 
-    def __init__(self, app, token: str):
+    Pure ASGI middleware (not BaseHTTPMiddleware) so streamed FileResponses and the many
+    thumbnail requests aren't slowed down. The network listener does not use this module: its
+    gate sets the scope from the signed-in account instead."""
+
+    def __init__(self, app):
         self.app = app
-        self._token = token.encode("utf-8")
-
-    def _is_valid(self, candidate) -> bool:
-        if not candidate:
-            return False
-        return hmac.compare_digest(candidate.encode("utf-8"), self._token)
 
     async def __call__(self, scope, receive, send):
         scope_type = scope["type"]
@@ -90,65 +75,43 @@ class TokenAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = Headers(scope=scope)
-        candidate = headers.get(API_TOKEN_HEADER)
-        if candidate is None and scope_type == "http" and scope["method"] == "GET" and scope["path"] in QUERY_TOKEN_PATHS:
-            candidate = QueryParams(scope["query_string"]).get("token")
+        scope[SCOPE_KEY] = LOCAL_OWNER
 
-        if scope_type == "websocket":
-            if not self._is_valid(candidate):
-                await send({"type": "websocket.close", "code": 1008})
-                return
-            scope[SCOPE_KEY] = LOCAL_OWNER
-            await self.app(scope, receive, send)
-            return
-
-        if scope_type != "http":
-            await self.app(scope, receive, send)
-            return
-
-        if not self._is_valid(candidate):
-            await JSONResponse(_UNAUTHORIZED, status_code=401)(scope, receive, send)
-            return
-
-        if scope["method"] == "POST" and scope["path"] == UPLOAD_PATH:
-            length = headers.get("content-length")
+        if scope_type == "http" and scope["method"] == "POST" and scope["path"] == UPLOAD_PATH:
+            length = Headers(scope=scope).get("content-length")
             if length is not None and length.isdigit() and int(length) > MAX_UPLOAD_BYTES + UPLOAD_OVERHEAD_BYTES:
                 await JSONResponse({"detail": "Upload too large (max 50 MB)"}, status_code=413)(scope, receive, send)
                 return
 
-        # The desktop app holds the token, so it acts as the owner on this machine
-        scope[SCOPE_KEY] = LOCAL_OWNER
         await self.app(scope, receive, send)
 
 
-def install(app, token: str) -> None:
-    """Order, outermost to innermost: TrustedHost -> CORS -> TokenAuth -> app. add_middleware makes
-    the last one added the outermost, so 401s still carry CORS headers the renderer can read."""
-    app.add_middleware(TokenAuthMiddleware, token=token)
+def install(app) -> None:
+    """Order, outermost to innermost: TrustedHost -> CORS -> LocalOwner -> app. add_middleware
+    makes the last one added the outermost, so a 413 response carries the CORS headers too."""
+    app.add_middleware(LocalOwnerMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=CORS_ORIGIN_REGEX,
         allow_methods=["GET", "POST", "DELETE"],
-        allow_headers=["Content-Type", API_TOKEN_HEADER],
+        allow_headers=["Content-Type"],
         allow_credentials=False,
     )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 
-class RedactTokenFilter(logging.Filter):
-    """uvicorn's access log prints the request path with its query string; hide ?token= in it."""
+class RedactPathsFilter(logging.Filter):
+    """uvicorn's access log prints the request path with its query string; hide local paths."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.args, tuple):
-            pattern = _PATH_QUERY_RE if _redact_paths else _TOKEN_QUERY_RE
             record.args = tuple(
-                pattern.sub(r"\1***", a) if isinstance(a, str) else a for a in record.args
+                _PATH_QUERY_RE.sub(r"\1***", a) if isinstance(a, str) else a for a in record.args
             )
         return True
 
 
 def install_access_log_redaction() -> None:
     access_logger = logging.getLogger("uvicorn.access")
-    if not any(isinstance(f, RedactTokenFilter) for f in access_logger.filters):
-        access_logger.addFilter(RedactTokenFilter())
+    if not any(isinstance(f, RedactPathsFilter) for f in access_logger.filters):
+        access_logger.addFilter(RedactPathsFilter())

@@ -9,7 +9,7 @@
 #                  newer; a few GB more to download)
 #   --data-dir     where models, the index and the settings live (default ~/.local/share/vblis)
 #   --python       the Python to build the environment with (3.11 to 3.13; default python3)
-#   --web-zip      the web interface from a release (VBLIS-web-<version>.zip), unpacked into app/dist;
+#   --web-zip      the web interface from a release (VBLIS-web-<version>.zip), unpacked into vsite/dist;
 #                  use it when Node.js isn't installed
 #   --no-service   don't write the systemd user service
 set -euo pipefail
@@ -74,7 +74,7 @@ bash "$REPO/scripts/linux-deps.sh" --python "$PY" --torch "$TORCH" --api "$API"
 say "Web interface"
 if [ -n "$WEB_ZIP" ]; then
   # Unpack beside the target and swap it in only when the zip checks out
-  "$PY" - "$WEB_ZIP" "$REPO/app/dist" <<'PYEOF'
+  "$PY" - "$WEB_ZIP" "$REPO/vsite/dist" <<'PYEOF'
 import os
 import shutil
 import sys
@@ -125,16 +125,16 @@ with archive:
             shutil.rmtree(staging, ignore_errors=True)
 print("Unpacked %s into %s" % (zip_path, dest))
 PYEOF
-elif [ -f "$REPO/app/dist/index.html" ]; then
-  echo "Found $REPO/app/dist"
+elif [ -f "$REPO/vsite/dist/index.html" ]; then
+  echo "Found $REPO/vsite/dist"
 elif command -v npm >/dev/null 2>&1; then
-  (cd "$REPO/app" && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci && npm run build)
+  (cd "$REPO/vsite" && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci && npm run build)
 else
   echo "Not found, and Node.js isn't installed. Either download VBLIS-web-<version>.zip from the release page and run"
   echo "  scripts/install-linux.sh --web-zip VBLIS-web-<version>.zip"
   echo "or build it on any machine with Node.js 22:"
   echo "  cd app && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci && npm run build"
-  echo "and copy app/dist here, to $REPO/app/dist. The server runs without it but shows only a note."
+  echo "and copy vsite/dist here, to $REPO/vsite/dist. The server runs without it but shows only a note."
 fi
 
 say "Check"

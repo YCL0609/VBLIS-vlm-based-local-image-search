@@ -38,7 +38,7 @@ if _web_dir_env:
 elif getattr(sys, "frozen", False):
     WEB_DIR = RESOURCE_DIR / "web"
 else:
-    WEB_DIR = API_DIR.parent / "app" / "dist"
+    WEB_DIR = API_DIR.parent / "vsite" / "dist"
 
 _DATA_LOCK_NAME = ".backend.lock"
 _data_lock_fd = None

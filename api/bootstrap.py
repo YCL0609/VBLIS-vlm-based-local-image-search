@@ -5,7 +5,7 @@ import sys
 import pillow_heif
 from dotenv import load_dotenv
 
-# Electron reads our stdout/stderr pipes as UTF-8, but they default to the ANSI code page, so
+# Desktop shells read our stdout/stderr pipes as UTF-8, but they default to the ANSI code page, so
 # printing a path it can't encode would raise. The frozen build ignores PYTHONUTF8/PYTHONIOENCODING.
 for _stream in (sys.stdout, sys.stderr):
     if _stream is not None and hasattr(_stream, "reconfigure"):
@@ -15,7 +15,6 @@ pillow_heif.register_heif_opener()
 
 # Ensure we load the .env from the data root (see paths.py), and strictly enforce HF_HOME
 import paths
-import security
 # Packaged builds only: move data an older build kept in the install folder (before anything opens it)
 try:
     _migration = paths.migrate_legacy_data()
@@ -31,8 +30,6 @@ try:
     paths.lock_data_dir()
 except paths.DataLockedError as e:
     sys.exit(f"[Startup] {e}; not starting.")
-# The token comes only from the launching process, never from .env (which overrides the environment)
-API_TOKEN = security.resolve_api_token()
 # Same for the network listener's VBLIS_SERVER_* settings: server_config reads them on import
 import server_config  # noqa: E402,F401
 load_dotenv(paths.ENV_FILE, override=True)

@@ -26,20 +26,20 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: app
+        working-directory: vsite
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      # Latest 22.x, not the runner's cached one: Electron 45 needs >= 22.12
+      # Latest 22.x: Vite 5 needs >= 20.19
       - name: Set up Node.js 22
         uses: actions/setup-node@v7
         with:
           node-version: "22"
           check-latest: true
           cache: "npm"
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: vsite/package-lock.json
 
       - name: Install Node Dependencies
         run: npm ci
@@ -50,6 +50,6 @@ jobs:
       - name: Unit Tests
         run: npx vitest run
 
-      # Renderer bundle plus the Electron main and preload scripts
+      # The renderer bundle embedded by the desktop shell
       - name: Build
         run: npm run build

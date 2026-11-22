@@ -77,6 +77,17 @@ describe('network mode', () => {
     expect(API_BASE).toBe('http://127.0.0.1:8000');
   });
 
+  it('is off in the QuickJS shell, which serves the page from its own port', async () => {
+    window.__VBLIS_SHELL__ = true;
+    try {
+      const { IS_NETWORK, API_BASE } = await loadConfig();
+      expect(IS_NETWORK).toBe(false);
+      expect(API_BASE).toBe('http://127.0.0.1:8000');
+    } finally {
+      delete window.__VBLIS_SHELL__;
+    }
+  });
+
   it('is off under test, which keeps the local backend address', async () => {
     const { IS_NETWORK, API_BASE } = await loadConfig('test');
     expect(IS_NETWORK).toBe(false);

@@ -1,6 +1,7 @@
-"""Who is making a request. The desktop token check (security.TokenAuthMiddleware) and the network
+"""Who is making a request. The desktop middleware (security.LocalOwnerMiddleware) and the network
 gate put an Auth into the ASGI scope; shared routes read it with Depends(current_auth), which fails
-closed when nothing set it."""
+closed when nothing set it. A network request also carries its NetRequest in another scope key, which
+is how local_owner tells the desktop app apart from a shared library."""
 from typing import NamedTuple, Optional
 
 from fastapi import HTTPException, Request

@@ -47,13 +47,13 @@ cd vblis
 scripts/install-linux.sh                # CPU; add --torch cuda for an NVIDIA GPU (x86-64)
 ```
 
-The script builds a private Python environment in `api/.venv` (nothing is installed system-wide), keeps your data in `~/.local/share/vblis` (`--data-dir` changes that), and writes a systemd user service. It needs the built web interface in `app/dist`: it builds it when Node.js 22 is installed. Without Node.js, download `VBLIS-web-<version>.zip` from the release page and give it to the script with `--web-zip`:
+The script builds a private Python environment in `api/.venv` (nothing is installed system-wide), keeps your data in `~/.local/share/vblis` (`--data-dir` changes that), and writes a systemd user service. It needs the built web interface in `vsite/dist`: it builds it when Node.js 22 is installed. Without Node.js, download `VBLIS-web-<version>.zip` from the release page and give it to the script with `--web-zip`:
 
 ```bash
 scripts/install-linux.sh --web-zip VBLIS-web-<version>.zip
 ```
 
-The script checks the zip and replaces `app/dist` with it. You can also build the interface on any machine with `cd app && ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci && npm run build` and copy `app/dist` over.
+The script checks the zip and replaces `vsite/dist` with it. You can also build the interface on any machine with `cd vsite && npm ci && npm run build` and copy `vsite/dist` over.
 
 Then, with `vblis` standing for `api/.venv/bin/python api/main.py --data-dir ~/.local/share/vblis`:
 

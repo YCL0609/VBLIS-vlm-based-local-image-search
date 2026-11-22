@@ -15,14 +15,11 @@
 
 # Stage 1: build the web interface
 FROM node:22-slim AS web
-# The Electron binary is not needed for the web build
-ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
-WORKDIR /src/app
+WORKDIR /src/vsite
 # The package files first, so the install layer is reused until they change
-COPY app/package.json app/package-lock.json ./
+COPY vsite/package.json vsite/package-lock.json ./
 RUN npm ci
-COPY app/ ./
-# Writes dist (the web interface) and dist-electron (not used here)
+COPY vsite/ ./
 RUN npm run build
 
 # Stage 2: the server
@@ -55,7 +52,7 @@ RUN bash /opt/vblis/scripts/linux-deps.sh --python /opt/venv/bin/python --torch 
 
 # Then the program and the web interface
 COPY api/ /opt/vblis/api/
-COPY --from=web /src/app/dist /opt/vblis/web
+COPY --from=web /src/vsite/dist /opt/vblis/web
 
 # A normal user owns /data. Compose can run the container as another user (VBLIS_UID, VBLIS_GID).
 # There is no VOLUME line on purpose: it would create an anonymous volume on every run.

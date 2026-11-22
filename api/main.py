@@ -23,7 +23,6 @@ import paths
 import replica
 import security
 import win_asyncio
-from bootstrap import API_TOKEN
 from network_listener import NetworkListener
 from routers import export, indexing, media, models, queue, search, settings, sharing
 
@@ -55,8 +54,8 @@ async def desktop_lifespan(app):
 
 app = FastAPI(title="Local Image Search API", lifespan=desktop_lifespan)
 
-# Only clients holding the token (the Electron app passes it via env) may call the API
-security.install(app, API_TOKEN)
+# Every request on the loopback interface is the local owner; Host/CORS and the upload cap still apply
+security.install(app)
 # A read-only copy of another machine's index answers writes to it with 409
 replica.install(app)
 

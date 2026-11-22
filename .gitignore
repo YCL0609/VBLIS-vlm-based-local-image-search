@@ -109,10 +109,8 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
-app/dist/
-app/dist-built/
-app/dist-electron/
-app/node_modules/
+vsite/dist/
+vsite/node_modules/
 api/.venv/
 api/__pycache__/
 api/build/
@@ -127,9 +125,9 @@ tests/
 # VS Code
 .vscode/
 
-# Build scripts outputs
-VBLIS-Setup-*.exe
-VBLIS-win-*.zip
+# Desktop shell build output
+quickjs/build/
+quickjs/build-musl/
 
 *.rar
 *.zip
@@ -137,3 +135,6 @@ VBLIS-win-*.zip
 # Local agent config and planning docs
 .claude/
 docs/
+
+# Network listener web assets staged by build_linux.sh
+api/web/

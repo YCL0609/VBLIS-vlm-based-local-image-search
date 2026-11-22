@@ -90,7 +90,7 @@ class Task:
         # request threads read). Taken after the queue lock, and never held while calling into the queue or indexer.
         self._progress_lock: threading.Lock = threading.Lock()
 
-    # app/src/utils/taskTitle.js parses these strings, so a change here needs a change there.
+    # vsite/src/utils/taskTitle.js parses these strings, so a change here needs a change there.
     @staticmethod
     def _generate_default_title(task_type: TaskType, payload: Dict[str, Any]) -> str:
         if task_type == TaskType.INDEX_FOLDERS:
