@@ -17,6 +17,16 @@ This repository is a fork of [opoeci6/VBLIS-vlm-based-local-image-search](https:
 - The desktop backend only accepts loopback requests and does not use the upstream shared API token. Server mode keeps upstream accounts, sessions, TLS and per-account permissions.
 - The desktop app has its own folder picker (`GET /fs/list`), so folders can be added without Electron.
 - Releases are built by the Linux workflow as a `VBLIS-linux-x86_64-<version>.tar.gz` bundle and a `VBLIS-web-<version>.zip`. macOS builds are made from source on the Mac (see [macOS Desktop Build](#macos-desktop-build)).
+- Linux and macOS are the same codebase, not two branches: `build_linux.sh` and `build_macos.sh` compile the same shell and API sources, and the platform is chosen at build or run time — static musl vs. dynamic Mach-O for the shell, XDG vs. `~/Library/Application Support` for data, `xdg-open` vs. `open` for the browser, CUDA vs. Metal for inference. No feature is disabled on one side to make the other work.
+
+What exists on which platform:
+
+| Part | Linux | macOS | Windows |
+|---|---|---|---|
+| Desktop shell and UI (`quickjs/`) | built, released | built from source | `app-win` target kept, no release, untested |
+| Python backend (`api/`) | supported | supported (Apple Silicon and Intel) | upstream code paths kept, untested here |
+| Server and replica mode | supported, also in Docker | backend only, no service script | see [SERVER.md](SERVER.md) |
+| Release bundle | `VBLIS-linux-x86_64-<version>.tar.gz` + `VBLIS-web-<version>.zip` | none yet — build it on the Mac | none |
 
 For building from source, see [Linux Desktop Build](#linux-desktop-build) or [macOS Desktop Build](#macos-desktop-build). For server and replica deployment, see [SERVER.md](SERVER.md).
 
@@ -47,6 +57,7 @@ For building from source, see [Linux Desktop Build](#linux-desktop-build) or [ma
 - Server mode also runs on a 64-bit Linux (x86-64 or ARM64) with Python 3.11 to 3.14, or in Docker. See [SERVER.md](SERVER.md).
 - A GPU is optional. On Windows/Linux VBLIS uses an NVIDIA GPU through CUDA (a GeForce GTX 16 or RTX 20-series card or newer, with NVIDIA driver 580 or newer); on macOS it uses Apple's Metal backend (MPS) on any Mac that supports it. Without one, indexing runs on the CPU (slower), and Settings says why. See [NVIDIA GPUs on Linux](#nvidia-gpus-on-linux) and [Apple GPUs on macOS](#apple-gpus-on-macos).
 - Disk space: about 3.7 GB for the app, plus 0.6–4.3 GB for each downloaded model, plus the index and the thumbnail cache.
+- Where this is tested: the Linux bundle on Ubuntu x86-64, with and without an NVIDIA GPU; the macOS build on Apple Silicon. Intel Macs build the same way and use Metal when their GPU supports it, otherwise the CPU.
 
 ## Linux Desktop Build
 
@@ -86,10 +97,18 @@ Prerequisites:
 ./build_macos.sh --binary        # also freeze the backend with PyInstaller
 ```
 
+`--binary` is only exercised on Linux; on macOS the source layout (`api/` + `run.sh`) is the tested
+path, so leave `--binary` out unless you want to try the PyInstaller bundle yourself.
+
 The result is `dist/vblis-macos-<arch>/` (for example `dist/vblis-macos-arm64/`); start it with
 `./run.sh` inside that folder. The first run creates a virtualenv in
 `~/Library/Application Support/VBLIS/venv` and installs the backend dependencies from PyPI
 (`torch` from PyPI, not the cu130 index). Nothing needs to be installed as root.
+
+To install the dependencies without opening the UI first (useful over a slow connection),
+run `./run.sh --backend` once and stop it when it prints `Uvicorn running on http://127.0.0.1:8000`.
+The shell writes the backend output to `$TMPDIR/vblis-backend.log` (override with `VBLIS_BACKEND_LOG`)
+and prints the path when it starts.
 
 The shell is code-signed ad hoc (`codesign --force --sign -`) by the build, so Gatekeeper does not
 treat it as a modified download. On a machine that only tests a local build, no notarization is
@@ -152,6 +171,94 @@ Common problems:
 - **Unsupported GPU.** CUDA 13 supports GeForce GTX 16 and RTX 20 series or newer; older cards such as the GTX 10 series run on the CPU.
 - **Docker or server mode.** A GPU inside a container needs the NVIDIA Container Toolkit and `--gpus all`; see [SERVER.md](SERVER.md).
 
+## Checking That the GPU Is in Use
+
+The backend prints the device it picked while it starts, and the settings page (**Models and GPU**)
+shows the same facts. The desktop shell writes that output to a log file: `$TMPDIR/vblis-backend.log`
+on macOS, `/tmp/vblis-backend.log` on Linux (override with `VBLIS_BACKEND_LOG`).
+
+```bash
+# macOS
+grep -E "ModelManager initialized|Inference session \(Text\)|\[GPU\]" "$TMPDIR/vblis-backend.log"
+# Linux
+grep -E "ModelManager initialized|Inference session \(Text\)|\[GPU\]|\[OOM" /tmp/vblis-backend.log
+```
+
+What to look for:
+
+| Line | Meaning |
+|---|---|
+| `ModelManager initialized on mps` | Metal is in use; the model and embeddings run on the Apple GPU |
+| `ModelManager initialized on cuda` | CUDA is in use (Linux/Windows) |
+| `ModelManager initialized on cpu` | no accelerator was found, or acceleration is turned off in the settings |
+| `Inference session (Text) on: mps:0` / `cuda:0` | the model parameters really live on that device, not just the flag |
+| `[GPU] Not using the GPU (...)` | the reason it fell back; Settings shows the same code |
+| `[GPU] Metal could not take ...` | the model could not be moved to Metal; indexing continues on the CPU, Settings reports `mps_failed` |
+| `[OOM Warning]` / `[VRAM Guard]` | the batch was too large and was split (CUDA only) |
+
+The same information, as JSON:
+
+```bash
+curl -s http://127.0.0.1:8000/settings/gpu
+```
+
+`device` is the torch device in use (`mps`, `cuda` or `cpu`), `accelerator` is `mps`/`cuda`/`null`,
+`gpu_name` is the chip (`Apple M2 Pro (Metal)`, `NVIDIA GeForce RTX 4070`), `cuda_available` means
+"any accelerator is available" (the name predates Metal support), `active_precision` is the precision
+actually used, and `gpu_problem` explains why an accelerator is unavailable.
+
+To see the hardware actually working during indexing: on macOS, **Activity Monitor** → **Window** →
+**GPU History**, or `sudo powermetrics --samplers gpu_power -i 1000 -n 20 | grep -iE "GPU|residency"`;
+on Linux, `nvidia-smi dmon` or `watch -n1 nvidia-smi`. The GPU should leave its idle state while images
+are embedded, and drop back when only file scanning or thumbnail generation is running.
+
+## Environment Variables
+
+The launcher and the backend read these. Everything else is configured in the app and stored in the
+data directory.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VBLIS_DATA_DIR` | Linux `~/.local/share/vblis`, macOS `~/Library/Application Support/VBLIS` | models, index, thumbnails, settings and the virtualenv live here |
+| `VBLIS_VENV_DIR` | `$VBLIS_DATA_DIR/venv` | where the Python environment is created |
+| `VBLIS_SYSTEM_PY` | auto-detected `python3.11`–`python3.14` | interpreter used to create the virtualenv |
+| `VBLIS_TORCH_SPEC` | `torch>=2.14.1` | pip spec for PyTorch, for a pinned version or a `+cpu` build |
+| `VBLIS_TORCH_INDEX` | Linux `https://download.pytorch.org/whl/cu130`, macOS empty (PyPI) | index used for the PyTorch install |
+| `VBLIS_NO_VENV_INSTALL` | unset | `1` = never install dependencies; fail if the environment is not ready |
+| `VBLIS_PYTHON` | the virtualenv's `python` | interpreter the shell starts the backend with |
+| `VBLIS_API_PORT` | `8000` | backend port (loopback only) |
+| `VBLIS_SHELL_PORT` | `11120` | port the shell serves the UI on (loopback only) |
+| `VBLIS_NO_BROWSER` | unset | `1` = do not open a browser window |
+| `VBLIS_NO_BACKEND` | unset | `1` = do not start the backend (the UI expects one already running) |
+| `VBLIS_ALLOW_MULTI` | unset | `1` = allow a second shell instance on the same port |
+| `VBLIS_BACKEND_LOG` | see above | path of the backend log file |
+| `VBLIS_BACKEND` | unset | executable to launch instead of the auto-detected backend |
+| `VBLIS_REPO_DIR` | shell's `../..` | source-tree root used when looking for a backend (source builds) |
+| `VBLIS_DEBUG` | unset | `1` = the shell prints why it could not find a backend |
+| `PYTORCH_ENABLE_MPS_FALLBACK` | `1` on macOS | set by the backend; unsupported Metal operators run on the CPU |
+| `USE_GPU`, `BATCH_SIZE`, `PRECISION_MODE` | `True`, `0`, `auto` | written to `.env` by **Models and GPU**; prefer changing them there |
+
+## Troubleshooting
+
+Build problems:
+
+- **`The current CMakeCache.txt directory ... is different`** — CMake cached the path of an older copy of the repository. Delete the build directory (`quickjs/build-musl` on Linux, `quickjs/build-macos` on macOS) and build again.
+- **macOS: `ld: library 'crt0.o' not found` while linking `qjsc`** — an older checkout of this fork linked quickjs-ng's build-time tool `qjsc` statically, which ld64 cannot do. Pull the latest `main`; `QJS_BUILD_CLI_STATIC` is now `OFF` on macOS.
+- **macOS: `ensure_venv.sh: line N: TORCH_SPEC?: unbound variable`** — same cause: an older checkout had `$TORCH_SPEC` directly followed by Chinese text, and macOS's bash 3.2 swallowed the multibyte character into the name. Fixed in `faaaa81`; pull the latest `main`.
+- **Linux: `musl-gcc: command not found`** — install a musl toolchain (`musl-tools` on Debian/Ubuntu, `musl` on Arch, `musl-gcc` on Fedora) or pass `--skip-shell` if you only need the backend.
+- **macOS: `cmake: command not found` / `node: command not found`** — `brew install cmake node`, and `xcode-select --install` for the compiler.
+- **No Python 3.11–3.14** — `brew install python@3.12` on macOS, or your distribution's package; the launcher also looks in `~/.local/bin`, Homebrew and conda directories.
+
+Runtime problems:
+
+- **The shell answers on `127.0.0.1:11120` but the UI says the backend is offline** — read the log named above. Running `./run.sh --backend` shows the same errors in the terminal; the first run needs network access and a few GB of disk.
+- **Port already in use, or "already running"** — the shell refuses to start a second instance on the same port. Close the other one, or set `VBLIS_ALLOW_MULTI=1` (or a different `VBLIS_SHELL_PORT`/`VBLIS_API_PORT`).
+- **macOS: the app is "damaged" or blocked by Gatekeeper on another Mac** — the build signs ad hoc for the machine that built it; if you copy the bundle through a browser or a zip, clear the quarantine flag: `xattr -dr com.apple.quarantine dist/vblis-macos-arm64`.
+- **Settings says no GPU on a Mac** — see [Apple GPUs on macOS](#apple-gpus-on-macos): check `torch.backends.mps.is_available()`, macOS 12.3+, and that a CPU-only PyTorch wheel was not installed.
+- **Indexing is slower than expected on a Mac** — Metal runs FP32 unless you pick FP16 in the settings, and operators Metal does not implement fall back to the CPU; the log names them. The `siglip2-base` models are much faster than the 4.3 GB SO400M on 8 GB machines.
+- **macOS log shows duplicate `AVFFrameReceiver` classes from `cv2` and `av`** — both packages bundle FFmpeg, and macOS loads both copies. Image indexing is unaffected; if video indexing turns out to crash on your machine, report it — the plan is to decode with PyAV only on macOS and drop OpenCV there.
+- **`UserWarning: Palette images with Transparency ...`** — a harmless Pillow warning while reading PNG/GIF files.
+
 ## Supported Formats
 
 - **Images:** JPEG, PNG, WebP, BMP, HEIC/HEIF, AVIF
@@ -191,7 +298,7 @@ For a server on Linux or in Docker, follow [SERVER.md](SERVER.md) instead. The r
 
 ## Upgrading
 
-- Your index, downloaded models and settings are kept. On Linux they live in `~/.local/share/vblis` by default (set `VBLIS_DATA_DIR` to change it); the upstream Windows installer uses `%LOCALAPPDATA%\VBLIS`.
+- Your index, downloaded models and settings are kept. On Linux they live in `~/.local/share/vblis` by default, on macOS in `~/Library/Application Support/VBLIS` (set `VBLIS_DATA_DIR` to change either); the upstream Windows installer uses `%LOCALAPPDATA%\VBLIS`.
 - After upgrading from v0.2.0 or older, re-sync your folders once (the **Re-sync** button of each folder in the Indexed Folders panel). That picks up AVIF files, and turns portrait videos and photos that older versions indexed sideways upright. Only those files are embedded again.
 - If some HEIC photos showed up turned in v0.4.0 or older, re-sync their folder once and use **Clear Image Cache** in the settings. Only those photos are embedded again.
 - Upgrading from v0.5.0 or newer needs no re-indexing: the new PyTorch in v0.7.0 gives the same search results. Sharing stays off until you turn on **Share on my network**.
@@ -202,7 +309,10 @@ For a server on Linux or in Docker, follow [SERVER.md](SERVER.md) instead. The r
 
 - [x] Support for more Vision-Language Models.
 - [x] Enhanced GPU acceleration settings (quantization, memory management).
-- [ ] Support for non-NVIDIA GPUs (MPS for Mac, Vulkan/DirectML for AMD/Intel).
+- [x] Apple Metal (MPS) acceleration on macOS, including settings support and automatic CPU fallback.
+- [ ] Vulkan/DirectML acceleration for AMD/Intel GPUs on Windows and Linux.
+- [ ] Hardware video decoding on macOS (VideoToolbox) and PyAV-only video decoding to drop the OpenCV/FFmpeg duplication.
+- [ ] Prebuilt macOS release bundle (`.tar.gz`) from CI, matching the Linux one.
 - [x] Interface translations (i18n): English and Simplified Chinese.
 - [x] Browse the library without a search query.
 - [x] Place names and a location filter, from the GPS data in photos and videos.
