@@ -1,4 +1,4 @@
-"""Whether this machine's NVIDIA GPU can run the PyTorch build VBLIS ships with.
+"""Whether this machine's GPU can run the PyTorch build VBLIS ships with.
 
 A PyTorch build only carries GPU code for some generations: the CUDA 13.0 build covers Turing (GTX 16,
 RTX 20) and newer, so a GTX 10-series card reports CUDA as available and then fails on its first operation
@@ -8,8 +8,14 @@ Settings can say why.
 
 The check reads the card's compute capability against torch.cuda.get_arch_list() and, when asked to probe,
 runs one tiny operation on the card. The probe creates a CUDA context (a few hundred MB of VRAM), so it only
-runs when the GPU is actually wanted."""
+runs when the GPU is actually wanted.
+
+On macOS the same question is answered for Apple's Metal backend (MPS): the PyPI torch wheels carry it, and
+check_accelerator() picks whichever accelerator this build has."""
+import platform
 import re
+import subprocess
+import sys
 import threading
 import warnings
 from typing import NamedTuple, Optional, Sequence, Tuple
@@ -19,6 +25,7 @@ import torch
 DRIVER_TOO_OLD = "driver_too_old"    # an NVIDIA driver older than the CUDA version of this build
 UNSUPPORTED_GPU = "unsupported_gpu"  # a card this build has no code for (GTX 10-series and older)
 CUDA_FAILED = "cuda_failed"          # anything else that stops CUDA from starting
+MPS_FAILED = "mps_failed"            # Metal is built in but the device or a test operation failed
 
 _DETAIL_LIMIT = 300
 _ARCH = re.compile(r"(sm|compute)_(\d+)(\d)([a-z]?)")
@@ -31,6 +38,22 @@ class CudaCheck(NamedTuple):
     capability: Optional[str]  # "sm_86"
     detail: Optional[str]      # the first line of the warning or error, for the log
     probed: bool               # whether one operation ran on the card
+
+
+class Accelerator(NamedTuple):
+    """The device torch should run on, or why it is running on the CPU instead."""
+    kind: Optional[str]        # "cuda", "mps", or None when running on the CPU
+    usable: bool
+    code: Optional[str]        # a *_FAILED / UNSUPPORTED_GPU / DRIVER_TOO_OLD code, None when usable or no GPU
+    name: Optional[str]        # device name for the UI ("NVIDIA GeForce RTX 4070", "Apple M2 Pro (Metal)")
+    capability: Optional[str]  # "sm_86"; always None for Metal
+    detail: Optional[str]      # first line of the warning/error, for the log
+    probed: bool               # whether one operation ran on the device
+
+
+_ACCEL_CACHE = {}
+
+
 
 
 def supports(capability: Tuple[int, int], arch_list: Sequence[str]) -> bool:
@@ -166,6 +189,88 @@ def check_cuda(probe: bool = False) -> CudaCheck:
 
 
 def reset_cache():
-    """Forgets the cached checks (tests)."""
+    """Forgets the cached checks and the chip name (tests)."""
+    global _MPS_NAME_CACHE
     with _lock:
         _results.clear()
+        _ACCEL_CACHE.clear()
+    _MPS_NAME_CACHE = None
+
+_MPS_NAME_CACHE = None
+
+
+def _mps_device_name() -> str:
+    """The chip name for the UI, e.g. "Apple M2 Pro (Metal)". Reads sysctl once (macOS only)."""
+    global _MPS_NAME_CACHE
+    if _MPS_NAME_CACHE is None:
+        name = None
+        if sys.platform == "darwin":
+            try:
+                out = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                                     capture_output=True, text=True, timeout=3)
+                name = (out.stdout or "").strip() or None
+            except Exception:
+                name = None
+        if not name:
+            name = "Apple GPU" if platform.machine() == "arm64" else "Metal GPU"
+        _MPS_NAME_CACHE = f"{name} (Metal)"
+    return _MPS_NAME_CACHE
+
+
+def check_mps(probe: bool = False) -> Accelerator:
+    """Whether Apple's Metal backend (MPS) can run this PyTorch build. Never raises.
+
+    A CPU-only or Intel wheel has no MPS at all: kind and code stay None, so the UI shows the plain
+    "no GPU acceleration" state rather than an error."""
+    backend = getattr(torch.backends, "mps", None)
+    try:
+        built = bool(backend is not None and backend.is_built())
+        available = built and backend.is_available()
+    except Exception as e:
+        return Accelerator(None, False, MPS_FAILED, _mps_device_name(), None, _first_line(e), False)
+    if not built or not available:
+        return Accelerator(None, False, None, None, None, None, False)
+
+    name = _mps_device_name()
+    if not probe:
+        return Accelerator("mps", True, None, name, None, None, False)
+    try:
+        values = torch.ones(8, device="mps") * 2
+        torch.mps.synchronize()
+        total = float(values.sum().item())
+        del values
+        if total != 16.0:
+            raise RuntimeError(f"a test operation on Metal returned {total} instead of 16")
+    except Exception as e:
+        return Accelerator("mps", False, MPS_FAILED, name, None, _first_line(e), True)
+    return Accelerator("mps", True, None, name, None, None, True)
+
+
+def check_accelerator(probe: bool = False) -> Accelerator:
+    """The best accelerator this machine can use (CUDA on Windows/Linux, Metal on macOS), cached per process.
+
+    When nothing is usable the result still carries a CUDA problem code (driver too old, unsupported card)
+    so Settings can say why; a plain CPU machine has code None. probe=True runs one tiny operation."""
+    with _lock:
+        # 不能在持锁时算：compute 里的 check_cuda / check_mps 也要拿这把锁
+        result = _ACCEL_CACHE.get(True) or (None if probe else _ACCEL_CACHE.get(False))
+    if result is not None:
+        return result
+
+    def compute(want_probe: bool) -> Accelerator:
+        cuda = check_cuda(probe=want_probe)
+        if cuda.usable:
+            return Accelerator("cuda", True, None, cuda.gpu_name, cuda.capability, None, cuda.probed)
+        if sys.platform == "darwin":
+            mps = check_mps(probe=want_probe)
+            if mps.usable or mps.code:
+                return mps
+        result = Accelerator(None, False, cuda.code, cuda.gpu_name, cuda.capability, cuda.detail, cuda.probed)
+        if result.code:
+            print(f"[GPU] Not using the GPU ({result.code}): {result.detail}")
+        return result
+
+    result = compute(probe)
+    with _lock:
+        _ACCEL_CACHE[probe] = result
+    return result

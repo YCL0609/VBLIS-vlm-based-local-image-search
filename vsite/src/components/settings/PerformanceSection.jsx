@@ -4,8 +4,10 @@ import { SettingsSelect } from '../common/SettingsSelect';
 import { cn } from '../../utils/cn';
 import { SectionTitle } from './SectionTitle';
 
-// Why a present NVIDIA GPU isn't used: a card or driver this PyTorch build can't run (api/gpu_support.py)
+// Why a present GPU isn't used: a card or driver this PyTorch build can't run, or Metal on macOS
+// (api/gpu_support.py). Only CUDA problems name NVIDIA hardware.
 const gpuProblemText = (t, problem) => {
+  if (problem.code === 'mps_failed') return t('performance.problem.mpsFailed');
   if (problem.code === 'unsupported_gpu') {
     return problem.gpu_name
       ? t('performance.problem.unsupportedGpu', { name: problem.gpu_name, capability: problem.capability || '?' })
@@ -18,6 +20,8 @@ const gpuProblemText = (t, problem) => {
 export const PerformanceSection = ({ gpuSettings, status, uiTheme, isSwitchingGpu, handleToggleGpu, handleUpdatePerformanceSettings }) => {
   const { t } = useTranslation('settings');
   const gpuProblem = gpuSettings.gpu_problem || null;
+  // 后端只报加速器种类；文案里才把它翻成 CUDA / Metal
+  const accelerator = gpuSettings.accelerator === 'mps' ? 'Metal' : 'CUDA';
   const autoPrecisionLabel = t('performance.precision.auto', { precision: gpuSettings.active_precision ? gpuSettings.active_precision.toUpperCase() : 'FP32' });
   return (
     <div>
@@ -35,7 +39,7 @@ export const PerformanceSection = ({ gpuSettings, status, uiTheme, isSwitchingGp
           <span className="text-[10px] text-neutral-400 dark:text-neutral-500 font-medium">
             {gpuSettings.cuda_available 
               ? (gpuSettings.use_gpu 
-                  ? (gpuSettings.gpu_name ? t('performance.gpuUsing', { name: gpuSettings.gpu_name }) : t('performance.gpuUsingCuda')) 
+                  ? (gpuSettings.gpu_name ? t('performance.gpuUsing', { name: gpuSettings.gpu_name }) : t('performance.gpuUsingAccelerator', { accelerator })) 
                   : t('performance.gpuDirects')) 
               : gpuProblem
                 ? (gpuProblem.gpu_name ? t('performance.gpuUnusable', { name: gpuProblem.gpu_name }) : t('performance.gpuUnusableUnnamed'))

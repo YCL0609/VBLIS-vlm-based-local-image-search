@@ -5,6 +5,7 @@ import { PerformanceSection } from './PerformanceSection';
 const makeGpu = (overrides = {}) => ({
   use_gpu: false,
   cuda_available: true,
+  accelerator: 'cuda',
   device: 'cuda',
   batch_size: 0,
   effective_batch_size: 16,
@@ -31,28 +32,28 @@ describe('PerformanceSection', () => {
   describe('GPU toggle', () => {
     it.each(['modern', 'terminal'])('is disabled without CUDA and shows the warning (%s)', (uiTheme) => {
       render(<PerformanceSection {...makeProps({ uiTheme, gpuSettings: makeGpu({ cuda_available: false }) })} />);
-      expect(screen.getByText('No NVIDIA GPU detected')).toBeTruthy();
-      expect(screen.getByText(/CUDA-capable GPU is required for GPU acceleration\./)).toBeTruthy();
-      expect(screen.getByLabelText('Enable NVIDIA GPU support').disabled).toBe(true);
+      expect(screen.getByText('No GPU acceleration detected')).toBeTruthy();
+      expect(screen.getByText(/CUDA or Metal support is required for hardware acceleration\./)).toBeTruthy();
+      expect(screen.getByLabelText('Enable GPU acceleration').disabled).toBe(true);
     });
 
     it.each(['modern', 'terminal'])('calls handleToggleGpu (%s)', (uiTheme) => {
       const props = makeProps({ uiTheme });
       render(<PerformanceSection {...props} />);
-      expect(screen.queryByText(/CUDA-capable GPU is required/)).toBeNull();
-      fireEvent.click(screen.getByLabelText('Enable NVIDIA GPU support'));
+      expect(screen.queryByText(/CUDA or Metal support is required/)).toBeNull();
+      fireEvent.click(screen.getByLabelText('Enable GPU acceleration'));
       expect(props.handleToggleGpu).toHaveBeenCalledTimes(1);
     });
 
     it('describes the GPU in use', () => {
       render(<PerformanceSection {...makeProps({ gpuSettings: makeGpu({ use_gpu: true, gpu_name: 'RTX 4090' }) })} />);
       expect(screen.getByText('Using RTX 4090')).toBeTruthy();
-      expect(screen.getByLabelText('Disable NVIDIA GPU support')).toBeTruthy();
+      expect(screen.getByLabelText('Disable GPU acceleration')).toBeTruthy();
     });
 
     it('is disabled while switching', () => {
       render(<PerformanceSection {...makeProps({ isSwitchingGpu: true })} />);
-      expect(screen.getByLabelText('Enable NVIDIA GPU support').disabled).toBe(true);
+      expect(screen.getByLabelText('Enable GPU acceleration').disabled).toBe(true);
     });
   });
 
@@ -67,14 +68,21 @@ describe('PerformanceSection', () => {
         "NVIDIA GeForce GTX 1060 (sm_61) isn't supported by this version of VBLIS, so it runs on the CPU. "
         + 'GPU acceleration needs a GeForce GTX 16 or RTX 20-series card or newer.',
       );
-      expect(screen.queryByText(/CUDA-capable GPU is required/)).toBeNull();
-      expect(screen.getByLabelText('Enable NVIDIA GPU support').disabled).toBe(true);
+      expect(screen.queryByText(/CUDA or Metal support is required/)).toBeNull();
+      expect(screen.getByLabelText('Enable GPU acceleration').disabled).toBe(true);
     });
 
     it('asks for a newer driver', () => {
       render(<PerformanceSection {...makeProps({ gpuSettings: unusable({ code: 'driver_too_old', gpu_name: null, capability: null }) })} />);
-      expect(screen.getByText("The NVIDIA GPU can't be used")).toBeTruthy();
+      expect(screen.getByText("The GPU can't be used")).toBeTruthy();
       expect(screen.getByRole('status').textContent).toMatch(/Update the NVIDIA driver to version 580 or newer/);
+    });
+
+    it('explains a Mac whose Metal could not start', () => {
+      const gpuSettings = unusable({ code: 'mps_failed', gpu_name: 'Apple M2 (Metal)', capability: null });
+      render(<PerformanceSection {...makeProps({ gpuSettings })} />);
+      expect(screen.getByText("Apple M2 (Metal) can't be used")).toBeTruthy();
+      expect(screen.getByRole('status').textContent).toMatch(/Metal couldn't be started on this Mac/);
     });
 
     it.each([
@@ -130,13 +138,13 @@ describe('PerformanceSection', () => {
     it('describes auto mode and the FP16 support hint', () => {
       render(<PerformanceSection {...makeProps({ gpuSettings: makeGpu({ effective_batch_size: 32 }) })} />);
       expect(screen.getByText('Auto mode active (Effective batch size: 32)')).toBeTruthy();
-      expect(screen.getByText('FP16 Tensor Cores supported')).toBeTruthy();
+      expect(screen.getByText('FP16 supported on this GPU')).toBeTruthy();
     });
 
     it('shows the manual batch hint and the legacy GPU hint', () => {
       render(<PerformanceSection {...makeProps({ gpuSettings: makeGpu({ batch_size: 8, fp16_supported: false }) })} />);
       expect(screen.getByText('Higher batch size increases GPU utilization.')).toBeTruthy();
-      expect(screen.getByText('Auto fallback to FP32 for legacy GPUs')).toBeTruthy();
+      expect(screen.getByText('FP32 is used unless FP16 is selected')).toBeTruthy();
     });
   });
 

@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from typing import Optional, List, Dict, Any, NamedTuple
 
@@ -8,6 +9,10 @@ import paths
 if "HF_HOME" not in os.environ:
     os.environ["HF_HOME"] = str(paths.MODELS_DIR)
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# Apple Metal 的算子覆盖不完整：打开回退后，MPS 没实现的算子自动在 CPU 上算，
+# 而不是让整次索引失败。非 macOS 平台和 CUDA 上这个变量没有影响。
+if sys.platform == "darwin":
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import torch
 from PIL import Image
@@ -56,11 +61,12 @@ class ModelManager:
         
         # Read device and performance preferences from environment
         env_use_gpu = os.getenv("USE_GPU", "True").lower() == "true"
-        # A card or driver this PyTorch build can't run falls back to the CPU (gpu_support); the one test
-        # operation on the card only runs when the GPU is wanted
-        cuda_available = gpu_support.check_cuda(probe=env_use_gpu).usable
-        self.use_gpu = env_use_gpu and cuda_available
-        self.device = "cuda" if self.use_gpu else "cpu"
+        # CUDA（Windows/Linux）或 Metal（macOS）：由 gpu_support 判断这次构建能不能真的用；
+        # 不能时退回 CPU。测试算子只在确实想用 GPU 时跑，避免提前占用显存。
+        self.accelerator = gpu_support.check_accelerator(probe=env_use_gpu)
+        gpu_available = self.accelerator.usable
+        self.use_gpu = env_use_gpu and gpu_available
+        self.device = (self.accelerator.kind or "cpu") if self.use_gpu else "cpu"
         
         try:
             val = int(os.getenv("BATCH_SIZE", "0"))
@@ -74,7 +80,7 @@ class ModelManager:
             hub_path = paths.HUB_DIR
         self.downloader = ModelDownloader(hub_path)
         
-        print(f"ModelManager initialized on {self.device} (Request GPU: {env_use_gpu}, Available: {cuda_available}, Configured Batch: {self.batch_size}, Precision Mode: {self.precision_mode})")
+        print(f"ModelManager initialized on {self.device} (Request GPU: {env_use_gpu}, Available: {gpu_available}, Accelerator: {self.accelerator.kind or 'none'}, Batch: {self.batch_size}, Precision: {self.precision_mode})")
         self.is_loading_model = False
         self.oom_triggered = False
         self.oom_triggered_count = 0
@@ -94,14 +100,28 @@ class ModelManager:
             return self.batch_size
             
         # batch_size == 0 -> Auto Dynamic Calculation
-        if not self.use_gpu or not torch.cuda.is_available():
+        if not self.use_gpu or self.device == "cpu":
             return 8  # CPU processing default
-            
+
+        model_id = (self.current_model_id or "").lower()
+        is_large_model = "so400m" in model_id or "384" in model_id or "naflex" in model_id
+
+        if self.device == "mps":
+            # Metal 用统一内存，没有显存上限可查：按 PyTorch 建议的可用内存预算分档，
+            # 再保守一点（Apple GPU 的 batch 收益不如 NVIDIA 大，但内存压力更明显）。
+            try:
+                budget_mb = torch.mps.recommended_max_memory() / (1024 * 1024)
+            except Exception:
+                budget_mb = 8 * 1024
+            if budget_mb >= 10 * 1024:   # 16GB+ 统一内存
+                return 16 if is_large_model else 32
+            elif budget_mb >= 6 * 1024:  # 8GB
+                return 8 if is_large_model else 16
+            else:                        # <= 6GB
+                return 4 if is_large_model else 8
+
         try:
             total_vram_mb = torch.cuda.get_device_properties(0).total_memory / (1024 * 1024)
-            model_id = (self.current_model_id or "").lower()
-            is_large_model = "so400m" in model_id or "384" in model_id or "naflex" in model_id
-            
             if total_vram_mb >= 11000:   # 12GB+ GPUs
                 return 32 if is_large_model else 64
             elif total_vram_mb >= 7000:  # 8GB GPUs
@@ -112,6 +132,12 @@ class ModelManager:
             return 16
 
     def check_fp16_support(self) -> bool:
+        if not self.use_gpu or self.device == "cpu":
+            return False
+        if self.device == "mps":
+            # Metal 能跑 fp16，但 auto 默认走 fp32 更稳（个别视觉算子对半精度敏感）；
+            # 想用半精度时在设置里显式选 FP16。
+            return False
         if not torch.cuda.is_available() or not gpu_support.check_cuda().usable:
             return False
         try:
@@ -122,9 +148,26 @@ class ModelManager:
             return False
 
     def get_gpu_name(self) -> str:
-        if torch.cuda.is_available():
-            return torch.cuda.get_device_name(0)
-        return "N/A"
+        """Name of the detected accelerator (CUDA card or Apple chip), "N/A" when there is none."""
+        return self.accelerator.name or "N/A"
+
+    def _autocast_device(self) -> str:
+        """The device_type torch.autocast() wants for the active accelerator."""
+        return "mps" if self.device == "mps" else "cuda"
+
+    def _empty_cache(self):
+        """Release cached allocator blocks on whichever accelerator is in use."""
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        try:
+            mps = getattr(torch, "mps", None)
+            if mps is not None and self.device == "mps":
+                mps.empty_cache()
+        except Exception:
+            pass
 
     def get_active_precision(self) -> str:
         if self.precision_mode == "fp16":
@@ -230,8 +273,7 @@ class ModelManager:
                 self.current_model_id = None
                 del old_model
                 del old_processor
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                self._empty_cache()
                 gc.collect()
 
             self.is_loading_model = True
@@ -248,7 +290,7 @@ class ModelManager:
                 self.processor = AutoProcessor.from_pretrained(load_target, use_fast=False, local_files_only=True)
                 model = AutoModel.from_pretrained(load_target, local_files_only=True)
                 self._match_text_tower_precision(model)
-                self.model = model.to(self.device)
+                self.model = self._to_device(model, model_id)
                 self.model.eval()
                 self.current_model_id = model_id
                 print(f"Model {model_id} loaded successfully from {load_target}.")
@@ -261,6 +303,34 @@ class ModelManager:
                 raise
             finally:
                 self.is_loading_model = False
+
+    def _to_device(self, model, model_id: str):
+        """Put the model on the accelerator. Metal refuses a few architectures (and some Macs run out of
+        unified memory while loading): fall back to the CPU instead of failing the whole load."""
+        try:
+            return model.to(self.device)
+        except Exception as e:
+            if self.device != "mps":
+                raise
+            detail = (str(e).strip().splitlines() or [repr(e)])[0]
+            print(f"[GPU] Metal could not take {model_id}, falling back to the CPU: {detail}")
+            self.use_gpu = False
+            self.device = "cpu"
+            self.accelerator = gpu_support.Accelerator(
+                None, False, gpu_support.MPS_FAILED, self.accelerator.name, None, detail[:300], True)
+            model = model.to("cpu")
+            # the text tower may already be half: on the CPU it must go back to fp32
+            if self._text_tower_is_half(model):
+                for module in self._text_tower(model):
+                    module.float()
+            gc.collect()
+            return model
+
+    @staticmethod
+    def _is_oom(error: BaseException) -> bool:
+        if isinstance(error, torch.cuda.OutOfMemoryError):
+            return True
+        return "out of memory" in str(error).lower()
 
     @staticmethod
     def _text_tower(model):
@@ -303,12 +373,13 @@ class ModelManager:
     def set_device(self, use_gpu: bool):
         """Toggle GPU usage and reload current model if necessary. A card or driver this build can't run
         keeps the CPU: the answer then has status "unusable" and the gpu_support code."""
-        check = gpu_support.check_cuda(probe=use_gpu)
+        check = gpu_support.check_accelerator(probe=use_gpu)
         if use_gpu and not check.usable and check.code:
             return {"status": "unusable", "code": check.code, "device": self.device,
                     "message": f"The GPU can't be used ({check.code}): {check.detail}"}
         new_use_gpu = use_gpu and check.usable
-        new_device = "cuda" if new_use_gpu else "cpu"
+        new_device = (check.kind or "cpu") if new_use_gpu else "cpu"
+        self.accelerator = check
         
         if self.device == new_device:
             return {"status": "success", "message": f"Device already set to {self.device}", "device": self.device}
@@ -350,8 +421,7 @@ class ModelManager:
             if old_model is not None:
                 del old_model
                 del old_processor
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                self._empty_cache()
                 gc.collect()
             print("Model unloaded successfully.")
 
@@ -476,7 +546,7 @@ class ModelManager:
 
         # VRAM Guard: Prevent Windows WDDM from spilling dedicated VRAM allocations into System Shared Memory
         run_singly = False
-        if self.use_gpu and torch.cuda.is_available() and len(items) > 1:
+        if self.use_gpu and self.device == "cuda" and len(items) > 1:
             try:
                 free_bytes, total_bytes = torch.cuda.mem_get_info()
                 reserved_bytes = torch.cuda.memory_reserved()
@@ -531,7 +601,7 @@ class ModelManager:
 
             active_precision = self.get_active_precision()
             if active_precision == "fp16" and self.use_gpu:
-                with torch.autocast("cuda", dtype=torch.float16):
+                with torch.autocast(self._autocast_device(), dtype=torch.float16):
                     image_features = model.get_image_features(**inputs)
             else:
                 image_features = model.get_image_features(**inputs)
@@ -547,24 +617,26 @@ class ModelManager:
             image_features = image_features / image_features.norm(p=2, dim=-1, keepdim=True)
             return image_features.cpu().numpy().tolist()
 
-        except torch.cuda.OutOfMemoryError as oom:
+        except RuntimeError as oom:
+            # CUDA 和 Metal 都抛 RuntimeError；别的运行时错误原样上抛
+            if not self._is_oom(oom):
+                raise
             self.oom_triggered = True
             self.oom_triggered_count += 1
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            self._empty_cache()
             gc.collect()
 
             if len(items) > 1:
                 mid = len(items) // 2
                 left_len, right_len = mid, len(items) - mid
-                print(f"[OOM Warning] CUDA Out of memory (batch_size={len(items)}). Flushing cache and micro-batching -> ({left_len}, {right_len})...")
+                print(f"[OOM Warning] {self.device} out of memory (batch_size={len(items)}). Flushing cache and micro-batching -> ({left_len}, {right_len})...")
                 left_embeds = self.embed_prepared(items[:mid], task_context=task_context)
                 if task_context and not task_context.check_paused_or_cancelled():
                     return left_embeds
                 right_embeds = self.embed_prepared(items[mid:], task_context=task_context)
                 return left_embeds + right_embeds
             else:
-                print(f"[OOM Error] CUDA Out of memory on single item (batch_size=1).")
+                print(f"[OOM Error] {self.device} out of memory on single item (batch_size=1).")
                 raise oom
 
     @torch.no_grad()
@@ -629,7 +701,7 @@ class ModelManager:
         
         print(f"Inference session (Text) on: {model_device}")
         if self._text_tower_is_half(model):
-            with torch.autocast("cuda", dtype=torch.float16):
+            with torch.autocast(self._autocast_device(), dtype=torch.float16):
                 text_features = model.get_text_features(**inputs)
         else:
             text_features = model.get_text_features(**inputs)

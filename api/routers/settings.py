@@ -14,18 +14,21 @@ class GPUSettingsRequest(BaseModel):
     precision_mode: Literal["auto", "fp16", "fp32"] = "auto"
 
 def _gpu_problem(check):
-    """Why a present NVIDIA GPU isn't used (Settings explains it), or None."""
+    """Why a present GPU isn't used (Settings explains it), or None."""
     if check.code is None:
         return None
     return {"code": check.code, "gpu_name": check.gpu_name, "capability": check.capability}
 
 @router.get("/settings/gpu")
 def get_gpu_settings():
-    check = gpu_support.check_cuda()
+    check = gpu_support.check_accelerator()
     return {
         "use_gpu": app_state.model_manager.use_gpu,
-        # False also for a card or driver this PyTorch build can't run; gpu_problem then says why
+        # 名字沿用 cuda_available 以免前端/旧客户端失效；含义是「有可用的加速器」
+        # （Windows/Linux 上是 CUDA，macOS 上是 Metal）。false 时 gpu_problem 说明原因。
         "cuda_available": check.usable,
+        # "cuda" | "mps" | None：前端据此选 CUDA / Metal 的文案
+        "accelerator": check.kind,
         "gpu_problem": _gpu_problem(check),
         "device": app_state.model_manager.device,
         "batch_size": app_state.model_manager.batch_size,
@@ -42,7 +45,7 @@ def get_gpu_settings():
 def set_gpu_settings(req: GPUSettingsRequest):
     print(f"Set GPU settings requested: GPU={req.use_gpu}, Batch={req.batch_size}, Precision={req.precision_mode}")
     if req.use_gpu:
-        check = gpu_support.check_cuda(probe=True)
+        check = gpu_support.check_accelerator(probe=True)
         if not check.usable and check.code:
             # Nothing changes: the GPU stays off and the settings are not saved
             return JSONResponse({"detail": f"The GPU can't be used ({check.code}): {check.detail}",
