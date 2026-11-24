@@ -100,7 +100,7 @@ need make "xcode-select --install（随 Command Line Tools 安装）"
 need cmake "brew install cmake"
 [ "$SKIP_FRONTEND" -eq 1 ] || { need node "brew install node"; need npm "随 node 安装"; }
 if [ "$WITH_BINARY" -eq 1 ]; then
-    [ -x "$VENV_PY" ] || die "--binary 需要 $VENV_PY（先创建后端虚拟环境并安装依赖）"
+    [ -x "$VENV_PY" ] || die "--binary 需要 ${VENV_PY}（先创建后端虚拟环境并安装依赖）"
     info "后端解释器: $($VENV_PY -V 2>&1)"
 fi
 info "仓库: $ROOT"
@@ -201,7 +201,7 @@ mkdir -p "$OUT_DIR"
 install -m 0755 "$QUICKJS_DIR/build-macos/app-macos" "$OUT_DIR/$APP_NAME"
 # 不要 strip：会破坏链接器生成的 ad-hoc 签名，arm64 上直接无法运行
 codesign --verify --quiet "$OUT_DIR/$APP_NAME" 2>/dev/null \
-    && ok "外壳: $OUT_DIR/$APP_NAME（ad-hoc 签名有效）" \
+    && ok "外壳: $OUT_DIR/${APP_NAME}（ad-hoc 签名有效）" \
     || {
         warn "外壳未带有效签名，补一个 ad-hoc 签名"
         codesign --force --sign - "$OUT_DIR/$APP_NAME" 2>/dev/null || true
@@ -253,7 +253,7 @@ PY="${VBLIS_PYTHON:-}"
 if [ -z "$PY" ]; then
   PY="$(bash "$APP_DIR/api/ensure_venv.sh" | tail -n 1)"
 fi
-[ -x "$PY" ] || { echo "[vblis] 没有可用的 Python 解释器（$PY）" >&2; exit 1; }
+[ -x "$PY" ] || { echo "[vblis] 没有可用的 Python 解释器（${PY}）" >&2; exit 1; }
 export VBLIS_PYTHON="$PY"
 
 if [ "$MODE" = "backend" ]; then
@@ -298,14 +298,14 @@ if [ "$DO_SMOKE" -eq 1 ]; then
                 # 不设置 VBLIS_VENV_DIR，ensure_venv.sh 会优先复用源码树的 api/.venv
                 info "复用后端环境: $API_DIR/.venv"
             else
-                warn "找不到可复用的 venv（$SMOKE_VENV），本次只测外壳；"
+                warn "找不到可复用的 venv（${SMOKE_VENV}），本次只测外壳；"
                 warn "首次安装依赖可执行: $OUT_DIR/run.sh --backend"
                 TEST_BACKEND=0
             fi
         fi
         [ "$TEST_BACKEND" -eq 1 ] || SMOKE_ENV+=(VBLIS_NO_BACKEND=1)
 
-        info "启动 $APP_NAME（API 端口 $SMOKE_PORT，日志 $LOG）…"
+        info "启动 ${APP_NAME}（API 端口 ${SMOKE_PORT}，日志 ${LOG}）…"
         env "${SMOKE_ENV[@]}" "$OUT_DIR/$APP_NAME" >"$LOG" 2>&1 &
         SHELL_PID=$!
         SMOKE_OK=0
@@ -326,7 +326,7 @@ if [ "$DO_SMOKE" -eq 1 ]; then
             if [ "$TEST_BACKEND" -eq 0 ]; then
                 ok "外壳响应正常（前端 11120；本次未验证后端）"
             else
-                ok "外壳与后端均响应正常（前端 11120，后端 $SMOKE_PORT）"
+                ok "外壳与后端均响应正常（前端 11120，后端 ${SMOKE_PORT}）"
             fi
         else
             warn "冒烟测试未通过，最后 20 行日志："

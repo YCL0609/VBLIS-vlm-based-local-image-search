@@ -80,7 +80,7 @@ need gcc "pacman -S gcc / build-essential"
 [ "$SKIP_SHELL" -eq 1 ] || need musl-gcc "pacman -S musl / apt install musl-tools"
 [ "$SKIP_FRONTEND" -eq 1 ] || { need node "https://nodejs.org"; need npm "随 node 安装"; }
 if [ "$WITH_BINARY" -eq 1 ]; then
-    [ -x "$VENV_PY" ] || die "--binary 需要 $VENV_PY（先创建后端虚拟环境并安装依赖）"
+    [ -x "$VENV_PY" ] || die "--binary 需要 ${VENV_PY}（先创建后端虚拟环境并安装依赖）"
     info "后端解释器: $($VENV_PY -V 2>&1)"
 fi
 info "仓库: $ROOT"
@@ -225,7 +225,7 @@ PY="${VBLIS_PYTHON:-}"
 if [ -z "$PY" ]; then
   PY="$(bash "$APP_DIR/api/ensure_venv.sh" | tail -n 1)"
 fi
-[ -x "$PY" ] || { echo "[vblis] 没有可用的 Python 解释器（$PY）" >&2; exit 1; }
+[ -x "$PY" ] || { echo "[vblis] 没有可用的 Python 解释器（${PY}）" >&2; exit 1; }
 export VBLIS_PYTHON="$PY"
 
 if [ "$MODE" = "backend" ]; then
@@ -266,14 +266,14 @@ if [ "$DO_SMOKE" -eq 1 ]; then
                 SMOKE_ENV+=(VBLIS_VENV_DIR="$SMOKE_VENV")
                 info "复用后端环境: $SMOKE_VENV"
             else
-                warn "找不到可复用的 venv（$SMOKE_VENV），本次只测外壳；"
+                warn "找不到可复用的 venv（${SMOKE_VENV}），本次只测外壳；"
                 warn "首次安装依赖可执行: $OUT_DIR/run.sh --backend"
                 TEST_BACKEND=0
             fi
         fi
         [ "$TEST_BACKEND" -eq 1 ] || SMOKE_ENV+=(VBLIS_NO_BACKEND=1)
 
-        info "启动 $APP_NAME（API 端口 $SMOKE_PORT，日志 $LOG）…"
+        info "启动 ${APP_NAME}（API 端口 ${SMOKE_PORT}，日志 ${LOG}）…"
         env "${SMOKE_ENV[@]}" "$OUT_DIR/$APP_NAME" >"$LOG" 2>&1 &
         SHELL_PID=$!
         SMOKE_OK=0
@@ -292,7 +292,7 @@ if [ "$DO_SMOKE" -eq 1 ]; then
             if [ "$TEST_BACKEND" -eq 0 ]; then
                 ok "外壳响应正常（前端 11120；本次未验证后端）"
             else
-                ok "外壳与后端均响应正常（前端 11120，后端 $SMOKE_PORT）"
+                ok "外壳与后端均响应正常（前端 11120，后端 ${SMOKE_PORT}）"
             fi
         else
             warn "冒烟测试未通过，最后 20 行日志："

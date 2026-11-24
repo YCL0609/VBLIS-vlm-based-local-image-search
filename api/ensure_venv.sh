@@ -200,10 +200,10 @@ log "准备安装后端依赖（首次需要下载 PyTorch 等，约 3–5 GB，
 # macOS 默认用 PyPI 轮子（含 Metal）。想强制 CPU 版或换 CUDA 版本时用
 # VBLIS_TORCH_SPEC / VBLIS_TORCH_INDEX 覆盖。
 if [ -n "$TORCH_INDEX" ]; then
-    log "安装 $TORCH_SPEC（索引 $TORCH_INDEX）"
+    log "安装 ${TORCH_SPEC}（索引 ${TORCH_INDEX}）"
     "$VENV_PY" -m pip install --only-binary :all: --index-url "$TORCH_INDEX" "$TORCH_SPEC" >&2
 else
-    log "安装 $TORCH_SPEC（PyPI 默认轮子）"
+    log "安装 ${TORCH_SPEC}（PyPI 默认轮子）"
     "$VENV_PY" -m pip install --only-binary :all: "$TORCH_SPEC" >&2
 fi
 
