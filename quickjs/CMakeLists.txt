@@ -1,21 +1,29 @@
 cmake_minimum_required(VERSION 3.15)
 
 # =====================================================================
-# 目标 C 库：glibc（默认）或 musl
+# 目标平台与 C 库
 #
-#   cmake -B build                          # glibc（默认）
-#   cmake -B build-musl -DQJSA_LIBC=musl    # musl
+#   cmake -B build                          # Linux glibc（默认）
+#   cmake -B build-musl -DQJSA_LIBC=musl    # Linux musl（静态）
+#   cmake -B build-macos                    # macOS（系统 clang + libSystem）
 #
-# 该参数统一决定 app-linux、qjsc/libqjs（ExternalProject）以及 .so 模块
-# 使用哪套 libc，避免 glibc 与 musl 混链。
+# macOS 上没有 musl，QJSA_LIBC 无意义；产物是 app-macos，Linux 上仍然是
+# app-linux。QJSA_LIBC 只影响 Linux 的 qjsc/libqjs（ExternalProject）与
+# .so 模块，避免 glibc 与 musl 混链。
 # =====================================================================
-set(QJSA_LIBC "glibc" CACHE STRING "目标 C 库：glibc（默认）或 musl")
+if(APPLE)
+    set(QJSA_PLATFORM "macos")
+else()
+    set(QJSA_PLATFORM "linux")
+endif()
+
+set(QJSA_LIBC "glibc" CACHE STRING "目标 C 库：glibc（默认）或 musl（仅 Linux）")
 set_property(CACHE QJSA_LIBC PROPERTY STRINGS glibc musl)
 if(NOT QJSA_LIBC MATCHES "^glibc$|^musl$")
     message(FATAL_ERROR "QJSA_LIBC 只能取 glibc 或 musl，当前为 '${QJSA_LIBC}'")
 endif()
 
-if(QJSA_LIBC STREQUAL "musl" AND NOT CMAKE_C_COMPILER)
+if(NOT APPLE AND QJSA_LIBC STREQUAL "musl" AND NOT CMAKE_C_COMPILER)
     find_program(QJSA_MUSL_GCC musl-gcc)
     if(NOT QJSA_MUSL_GCC)
         message(FATAL_ERROR "QJSA_LIBC=musl，但找不到 musl-gcc，请先安装 musl 工具链")
@@ -26,16 +34,35 @@ endif()
 project(QjsApp LANGUAGES C)
 
 # 也允许只传 -DCMAKE_C_COMPILER=musl-gcc 的调用方式
-if(CMAKE_C_COMPILER MATCHES "musl" AND QJSA_LIBC STREQUAL "glibc")
+if(NOT APPLE AND CMAKE_C_COMPILER MATCHES "musl" AND QJSA_LIBC STREQUAL "glibc")
     set(QJSA_LIBC "musl")
     message(STATUS "检测到 musl 编译器，按 musl 方式构建")
 endif()
-message(STATUS "目标 C 库: ${QJSA_LIBC} (编译器: ${CMAKE_C_COMPILER})")
+if(APPLE)
+    set(QJSA_LIBC "system")
+    message(STATUS "目标平台: macOS (编译器: ${CMAKE_C_COMPILER})")
+else()
+    message(STATUS "目标平台: Linux，C 库: ${QJSA_LIBC} (编译器: ${CMAKE_C_COMPILER})")
+endif()
 
 #### 全局编译选项 ####
 
 set(COMMON_CFLAGS  -Os -flto -ffunction-sections -fdata-sections)
-set(COMMON_LDFLAGS -Wl,--gc-sections -s)
+
+if(APPLE)
+    # ld64 没有 --gc-sections，-dead_strip 做同样的事。这里也不要 -s：arm64 的
+    # 可执行文件由链接器自动做 ad-hoc 签名，strip 会破坏签名，运行时被内核杀掉。
+    set(COMMON_LDFLAGS -Wl,-dead_strip)
+    set(COMMON_LIBS    -lm -lpthread)
+    set(APP_TARGET     app-macos)
+else()
+    set(COMMON_LDFLAGS -Wl,--gc-sections -s)
+    set(COMMON_LIBS    -static -lm -lpthread)
+    set(APP_TARGET     app-linux)
+endif()
+
+# Windows 交叉编译目标自己的链接参数（与宿主平台无关）
+set(WIN_LDFLAGS -Wl,--gc-sections -s)
 
 #### 构建输出目录 ####
 
@@ -153,30 +180,38 @@ message(STATUS "启用模块: httpd=${QJSA_HTTPD} winproc=${QJSA_WINPROC} resour
 
 include(ExternalProject)
 
-# 用与 app-linux 相同的编译器构建，保证 libc 一致
-ExternalProject_Add(quickjs-linux
+# 用与 app 相同的编译器构建，保证 C 库一致
+set(HOST_BUILD_DIR ${QUICKJS_BUILD_DIR}/build-host)
+if(APPLE)
+    set(QJS_HOST_LINKER_FLAGS -Wl,-dead_strip)
+else()
+    set(QJS_HOST_LINKER_FLAGS -Wl,--gc-sections)
+endif()
+
+ExternalProject_Add(quickjs-host
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/deps/quickjs
-    BINARY_DIR ${QUICKJS_BUILD_DIR}/build-linux
+    BINARY_DIR ${HOST_BUILD_DIR}
     INSTALL_COMMAND ""
     CMAKE_ARGS
         -DQJS_BUILD_CLI_STATIC=ON
         -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
         -DCMAKE_C_FLAGS=-O2
-        -DCMAKE_EXE_LINKER_FLAGS=-Wl,--gc-sections
+        -DCMAKE_EXE_LINKER_FLAGS=${QJS_HOST_LINKER_FLAGS}
     BUILD_BYPRODUCTS
-        ${QUICKJS_BUILD_DIR}/build-linux/qjsc
-        ${QUICKJS_BUILD_DIR}/build-linux/libqjs.a
-        ${QUICKJS_BUILD_DIR}/build-linux/libqjs-libc.a
-    BUILD_COMMAND $(MAKE) qjsc
+        ${HOST_BUILD_DIR}/qjsc
+        ${HOST_BUILD_DIR}/libqjs.a
+        ${HOST_BUILD_DIR}/libqjs-libc.a
+    # 用 cmake --build 而不是 $(MAKE)：生成器换成 Ninja/Xcode 时也能用
+    BUILD_COMMAND ${CMAKE_COMMAND} --build ${HOST_BUILD_DIR} --target qjsc
 )
 
 # 生成并修补 main.c
 add_custom_command(
     OUTPUT ${BUILD_OUTPUT_DIR}/main.c
-    COMMAND ${QUICKJS_BUILD_DIR}/build-linux/qjsc ${MODULE_MAP_ARGS} -e -o ${BUILD_OUTPUT_DIR}/main.c ${CMAKE_SOURCE_DIR}/main.js
+    COMMAND ${HOST_BUILD_DIR}/qjsc ${MODULE_MAP_ARGS} -e -o ${BUILD_OUTPUT_DIR}/main.c ${CMAKE_SOURCE_DIR}/main.js
     COMMAND ${CMAKE_COMMAND} -DIN_FILE=${BUILD_OUTPUT_DIR}/main.c -DOUT_FILE=${BUILD_OUTPUT_DIR}/main.c -P ${CMAKE_BINARY_DIR}/patch_main.cmake
-    DEPENDS ${CMAKE_SOURCE_DIR}/main.js ${QUICKJS_BUILD_DIR}/build-linux/qjsc
+    DEPENDS ${CMAKE_SOURCE_DIR}/main.js ${HOST_BUILD_DIR}/qjsc
     COMMENT "Generating and patching main.c (main entry point)"
 )
 
@@ -195,7 +230,7 @@ file(WRITE \"\${OUT_FILE}\" \"\${CONTENT}\")
 ")
 
 add_custom_target(generate_test_c DEPENDS ${BUILD_OUTPUT_DIR}/main.c)
-add_dependencies(generate_test_c quickjs-linux)
+add_dependencies(generate_test_c quickjs-host)
 
 #### 预构建脚本 ####
 
@@ -226,28 +261,26 @@ set(APP_INCLUDE_DIRS
     ${APP_MODULE_INCS}
 )
 
-# 原生可执行文件
-add_executable(app-linux
+# 原生可执行文件（Linux: app-linux，macOS: app-macos）
+add_executable(${APP_TARGET}
     ${APP_MODULE_SRCS}
     ${BUILD_OUTPUT_DIR}/main.c
     ${GENERATED_LIBS_PATHS}
 )
-target_include_directories(app-linux PRIVATE ${APP_INCLUDE_DIRS})
-target_link_libraries(app-linux
-    ${QUICKJS_BUILD_DIR}/build-linux/libqjs.a
-    ${QUICKJS_BUILD_DIR}/build-linux/libqjs-libc.a
-    -static
-    -lm
-    -lpthread
+target_include_directories(${APP_TARGET} PRIVATE ${APP_INCLUDE_DIRS})
+target_link_libraries(${APP_TARGET}
+    ${HOST_BUILD_DIR}/libqjs.a
+    ${HOST_BUILD_DIR}/libqjs-libc.a
+    ${COMMON_LIBS}
 )
-target_compile_options(app-linux PRIVATE ${COMMON_CFLAGS})
-target_compile_definitions(app-linux PRIVATE ${APP_MODULE_DEFS})
-target_link_options(app-linux PRIVATE ${COMMON_LDFLAGS})
-set_target_properties(app-linux PROPERTIES
+target_compile_options(${APP_TARGET} PRIVATE ${COMMON_CFLAGS})
+target_compile_definitions(${APP_TARGET} PRIVATE ${APP_MODULE_DEFS})
+target_link_options(${APP_TARGET} PRIVATE ${COMMON_LDFLAGS})
+set_target_properties(${APP_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${BUILD_OUTPUT_DIR}
-    OUTPUT_NAME app-linux
+    OUTPUT_NAME ${APP_TARGET}
 )
-add_dependencies(app-linux quickjs-linux generate_test_c pre_build)
+add_dependencies(${APP_TARGET} quickjs-host generate_test_c pre_build)
 
 set_source_files_properties(${BUILD_OUTPUT_DIR}/main.c PROPERTIES GENERATED TRUE)
 foreach(_gen ${GENERATED_LIBS_PATHS})
@@ -256,20 +289,26 @@ endforeach()
 
 ######### Windows 目标 #########
 
-# 构建 Windows 版 QuickJS 静态库
+# 构建 Windows 版 QuickJS 静态库（需要 MinGW-w64；macOS 上没装就跳过）
+find_program(QJSA_MINGW_GCC x86_64-w64-mingw32-gcc)
+if(NOT QJSA_MINGW_GCC)
+    message(STATUS "未找到 x86_64-w64-mingw32-gcc，跳过 Windows 目标（app-win.exe）")
+else()
+message(STATUS "Windows 交叉编译器: ${QJSA_MINGW_GCC}")
+
 ExternalProject_Add(quickjs-win
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/deps/quickjs
     BINARY_DIR ${QUICKJS_BUILD_DIR}/build-win
     INSTALL_COMMAND ""
     CMAKE_ARGS
         -DCMAKE_SYSTEM_NAME=Windows
-        -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc
+        -DCMAKE_C_COMPILER=${QJSA_MINGW_GCC}
         -DQJS_BUILD_CLI_STATIC=ON
         -DCMAKE_BUILD_TYPE=Release
     BUILD_BYPRODUCTS
         ${QUICKJS_BUILD_DIR}/build-win/libqjs.a
         ${QUICKJS_BUILD_DIR}/build-win/libqjs-libc.a
-    BUILD_COMMAND $(MAKE) qjs-libc
+    BUILD_COMMAND ${CMAKE_COMMAND} --build ${QUICKJS_BUILD_DIR}/build-win --target qjs-libc
 )
 
 set(WIN_INCLUDE_ARGS "")
@@ -290,16 +329,17 @@ set(WIN_APP_SRCS
 
 # 直接调用 MinGW 编译器生成 app-win.exe
 add_custom_target(app-win ALL
-    COMMAND x86_64-w64-mingw32-gcc ${COMMON_CFLAGS} ${WIN_DEF_ARGS} ${WIN_INCLUDE_ARGS}
+    COMMAND ${QJSA_MINGW_GCC} ${COMMON_CFLAGS} ${WIN_DEF_ARGS} ${WIN_INCLUDE_ARGS}
         ${WIN_APP_SRCS}
         ${QUICKJS_BUILD_DIR}/build-win/libqjs.a
         ${QUICKJS_BUILD_DIR}/build-win/libqjs-libc.a
         -o ${BUILD_OUTPUT_DIR}/app-win.exe
-        ${COMMON_LDFLAGS} -static -lws2_32 -lwinpthread -lm
+        ${WIN_LDFLAGS} -static -lws2_32 -lwinpthread -lm
     DEPENDS quickjs-win generate_test_c pre_build
     COMMENT "Compiling Windows executable (app-win.exe)"
 )
 add_dependencies(app-win quickjs-win)
+endif()
 
 ######### 共享模块（.so） #########
 #

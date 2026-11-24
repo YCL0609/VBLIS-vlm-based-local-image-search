@@ -128,6 +128,7 @@ tests/
 # Desktop shell build output
 quickjs/build/
 quickjs/build-musl/
+quickjs/build-macos/
 
 *.rar
 *.zip

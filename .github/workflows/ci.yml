@@ -1,7 +1,9 @@
 name: CI
 
 # Frontend checks on every pull request, on pushes to dev/main, and before every release
-# (release.yml calls this workflow, so a change here also gates releases). The backend tests stay local.
+# (release.yml calls this workflow, so a change here also gates releases). The macOS job builds the
+# desktop shell on Apple Silicon so the Darwin code path is compiled, not just read. The backend tests
+# stay local.
 on:
   pull_request:
   push:
@@ -53,3 +55,44 @@ jobs:
       # The renderer bundle embedded by the desktop shell
       - name: Build
         run: npm run build
+
+  desktop-shell-macos:
+    # The macOS bundle is built on the Mac itself; this job proves quickjs/ and the scripts compile
+    # there. macos-latest is Apple Silicon, which is the target of quickjs/build.sh's Darwin branch.
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          check-latest: true
+          cache: "npm"
+          cache-dependency-path: vsite/package-lock.json
+
+      - name: Install Node Dependencies
+        working-directory: vsite
+        run: npm ci
+
+      - name: Build Frontend
+        working-directory: vsite
+        run: npm run build
+
+      # The shell embeds vsite/dist, so the frontend must be built first
+      - name: Build Desktop Shell
+        working-directory: quickjs
+        run: |
+          cmake -B build-macos
+          cmake --build build-macos -j --target app-macos
+          file build-macos/app-macos
+          codesign --verify --verbose build-macos/app-macos
+
+      # macOS ships bash 3.2: parsing here catches GNU-only syntax before someone finds it on a Mac
+      - name: Check Shell Scripts
+        run: bash -n build_macos.sh api/ensure_venv.sh quickjs/build.sh
+
+      - name: Check Python Syntax
+        run: python3 -m compileall -q api

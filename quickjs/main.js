@@ -69,7 +69,7 @@ function findBackend() {
     const packaged = joinPath(appDir, 'api', 'api');
     if (statOf(packaged)) return { exe: packaged, args: [], cwd: dirName(packaged), label: 'packaged api' };
 
-    // 源码树 <repo>/quickjs/build-musl/app-linux → <repo>/api
+    // 源码树 <repo>/quickjs/build-musl/app-linux（macOS: build-macos/app-macos）→ <repo>/api
     const repo = std.getenv('VBLIS_REPO_DIR') || joinPath(appDir, '..', '..');
     const apiDir = joinPath(repo, 'api');
     const frozen = joinPath(apiDir, 'dist', 'api', 'api');
@@ -104,12 +104,17 @@ function mkdirp(path) {
 }
 
 /**
- * 打包版默认把数据放在 `$XDG_DATA_HOME/vblis`（默认 ~/.local/share/vblis）：
+ * 打包版默认把数据放在用户数据目录：Linux 是 `$XDG_DATA_HOME/vblis`（默认
+ * ~/.local/share/vblis），macOS 是 ~/Library/Application Support/VBLIS。
  * PyInstaller 目录里的 `_internal` 会随升级整个替换，不能在那里存模型和索引。
  * 源码树仍用 api/ 下的现有数据。
  */
 function packagedDataDir() {
-    const base = std.getenv('XDG_DATA_HOME') || joinPath(std.getenv('HOME') || '', '.local', 'share');
+    const home = std.getenv('HOME') || '';
+    if (os.platform === 'darwin') {
+        return joinPath(home, 'Library', 'Application Support', 'VBLIS');
+    }
+    const base = std.getenv('XDG_DATA_HOME') || joinPath(home, '.local', 'share');
     return joinPath(base, 'vblis');
 }
 
@@ -131,7 +136,11 @@ function startBackend() {
         return;
     }
 
-    const logPath = std.getenv('VBLIS_BACKEND_LOG') || '/tmp/vblis-backend.log';
+    // macOS 的 /tmp 是所有用户共用的；TMPDIR 是当前用户的私有临时目录
+    const defaultLog = os.platform === 'darwin'
+        ? joinPath(std.getenv('TMPDIR') || '/tmp', 'vblis-backend.log')
+        : '/tmp/vblis-backend.log';
+    const logPath = std.getenv('VBLIS_BACKEND_LOG') || defaultLog;
     let logFd = -1;
     try {
         logFd = os.open(logPath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644);
@@ -270,7 +279,7 @@ function handleRequest(req, res) {
  * 所以改成在 serve 之前先判断有没有活着的实例：有就打开它的页面然后退出，
  * 避免用户双击两次看到一屏 InternalError。
  */
-const RUNTIME_DIR = std.getenv('XDG_RUNTIME_DIR') || '/tmp';
+const RUNTIME_DIR = std.getenv('XDG_RUNTIME_DIR') || std.getenv('TMPDIR') || '/tmp';
 const PID_FILE = joinPath(RUNTIME_DIR, 'vblis-shell-' + PORT + '.pid');
 const SHELL_URL = 'http://' + API_HOST + ':' + PORT;
 
