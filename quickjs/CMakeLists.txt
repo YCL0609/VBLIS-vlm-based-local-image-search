@@ -184,8 +184,12 @@ include(ExternalProject)
 set(HOST_BUILD_DIR ${QUICKJS_BUILD_DIR}/build-host)
 if(APPLE)
     set(QJS_HOST_LINKER_FLAGS -Wl,-dead_strip)
+    # 静态链接的 qjsc 在 macOS 上不可行：ld64 不支持 -static（会报 "library 'crt0.o'
+    # not found"）。qjsc 只是构建期工具，动态链接 libSystem 完全够用。
+    set(QJS_HOST_STATIC_CLI OFF)
 else()
     set(QJS_HOST_LINKER_FLAGS -Wl,--gc-sections)
+    set(QJS_HOST_STATIC_CLI ON)
 endif()
 
 ExternalProject_Add(quickjs-host
@@ -193,7 +197,7 @@ ExternalProject_Add(quickjs-host
     BINARY_DIR ${HOST_BUILD_DIR}
     INSTALL_COMMAND ""
     CMAKE_ARGS
-        -DQJS_BUILD_CLI_STATIC=ON
+        -DQJS_BUILD_CLI_STATIC=${QJS_HOST_STATIC_CLI}
         -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
         -DCMAKE_C_FLAGS=-O2
